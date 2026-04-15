@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bimanual UR10e Teleop</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────────────────── -->
+<header>
+  <h1>Bimanual <span>UR10e</span> Teleop</h1>
+
+  <div class="header-right">
+    <span id="state-badge" class="badge-idle">IDLE</span>
+
+    <div class="conn-indicators">
+      <div class="conn-dot" id="dot-robot-left"><span class="dot"></span>L-Robot</div>
+      <div class="conn-dot" id="dot-robot-right"><span class="dot"></span>R-Robot</div>
+      <div class="conn-dot" id="dot-gello-left"><span class="dot"></span>L-GELLO</div>
+      <div class="conn-dot" id="dot-gello-right"><span class="dot"></span>R-GELLO</div>
+      <div class="conn-dot" id="dot-ros2"><span class="dot"></span>ROS2</div>
+    </div>
+
+    <button class="btn-secondary btn-sm" onclick="app.openSettings()">&#9881; Settings</button>
+  </div>
+</header>
+
+<!-- ── Main ─────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- ── Row 1: Connection + Teleop Control (always visible) ───────────── -->
+  <div class="top-row">
+
+    <!-- Connection Card -->
+    <div class="card">
+      <div class="card-title">Connection</div>
+      <div class="conn-button-grid">
+        <button class="btn-primary" id="btn-connect-robots" onclick="app.connectRobots()">
+          &#9889; Connect Robots
+        </button>
+        <button class="btn-secondary" id="btn-connect-gello" onclick="app.connectGello()">
+          &#127918; Connect GELLO
+        </button>
+        <button class="btn-danger btn-sm" id="btn-disconnect"
+                onclick="app.disconnect()" style="display:none">
+          Disconnect
+        </button>
+      </div>
+      <div id="conn-hint" style="margin-top:10px;color:var(--text-dim);font-size:12px;">
+        Connect robots first, then GELLO devices.
+      </div>
+    </div>
+
+    <!-- Teleop Control Card -->
+    <div class="card">
+      <div class="card-title">Teleop Control</div>
+      <div class="teleop-btn-row">
+        <button class="teleop-btn passive-btn active" id="btn-passive"
+                onclick="app.setTeleopState('passive')" disabled>
+          &#9646;&#9646; PASSIVE
+        </button>
+        <button class="teleop-btn active-btn" id="btn-active"
+                onclick="app.setTeleopState('active')" disabled>
+          &#9654; ACTIVE
+        </button>
+      </div>
+      <div id="teleop-hint" style="margin-top:10px;font-size:12px;color:var(--text-dim);">
+        Connect robots + GELLO first, then click <strong style="color:var(--green)">ACTIVE</strong> to start teleop.
+      </div>
+    </div>
+
+  </div><!-- /top-row -->
+
+  <!-- ── Row 2: Live Joint Display (always visible) ────────────────────── -->
+  <div class="arm-grid">
+    <!-- Left arm -->
+    <div class="arm-card">
+      <h3>
+        <span class="arm-icon left-icon">L</span>
+        Left Arm
+        <span style="font-size:11px;color:var(--text-dim);font-weight:400;margin-left:4px;" id="left-ip-label"></span>
+      </h3>
+      <table class="joint-table"><tbody id="left-joints-body"></tbody></table>
+    </div>
+    <!-- Right arm -->
+    <div class="arm-card">
+      <h3>
+        <span class="arm-icon right-icon">R</span>
+        Right Arm
+        <span style="font-size:11px;color:var(--text-dim);font-weight:400;margin-left:4px;" id="right-ip-label"></span>
+      </h3>
+      <table class="joint-table"><tbody id="right-joints-body"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ── Row 3: Mode Tabs ───────────────────────────────────────────────── -->
+  <div class="mode-tabs-row">
+    <button class="tab-btn active" id="tab-teleop"   onclick="app.switchMode('teleop')">Teleop</button>
+    <button class="tab-btn"        id="tab-motion"   onclick="app.switchMode('motion_plan')">Motion Plan</button>
+    <button class="tab-btn"        id="tab-gripper"  onclick="app.switchMode('gripper')">Gripper</button>
+  </div>
+
+  <!-- ── Motion Plan Panel (shown in motion_plan mode) ─────────────────── -->
+  <div id="motion-plan-panel" style="display:none;">
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">Target Joint State — Move To</div>
+      <div class="target-grid">
+        <div class="joint-input-card">
+          <h3><span class="arm-icon left-icon">L</span>Left Arm Target</h3>
+          <div id="left-target-inputs"></div>
+        </div>
+        <div class="joint-input-card">
+          <h3><span class="arm-icon right-icon">R</span>Right Arm Target</h3>
+          <div id="right-target-inputs"></div>
+        </div>
+      </div>
+      <div class="plan-params">
+        <div class="param-group">
+          <label>Speed (0–1)</label>
+          <input type="number" id="movej-speed" value="0.5" min="0.01" max="1.0" step="0.05" />
+        </div>
+        <div class="param-group">
+          <label>Acceleration (0–1)</label>
+          <input type="number" id="movej-accel" value="0.3" min="0.01" max="1.0" step="0.05" />
+        </div>
+        <button class="btn-secondary btn-sm" onclick="app.fillCurrentJoints()">
+          &#8601; Fill from current
+        </button>
+      </div>
+      <div class="plan-actions">
+        <button class="btn-primary" id="btn-execute-move" onclick="app.executeMoveToTarget()" disabled>
+          &#9654; Execute Move
+        </button>
+        <span id="motion-status" style="font-size:12px;color:var(--text-dim);"></span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">Execute Pre-Planned Trajectory</div>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">
+        Paste a JSON array of trajectory points. Each point:
+        <code style="color:var(--blue)">left_joints</code> [6 rad],
+        <code style="color:var(--blue)">left_gripper</code> [0–1],
+        <code style="color:var(--blue)">right_joints</code> [6 rad],
+        <code style="color:var(--blue)">right_gripper</code> [0–1],
+        <code style="color:var(--blue)">time_from_start</code> [sec].
+      </p>
+      <textarea id="traj-textarea" placeholder='[{"left_joints":[0,0,0,0,0,0],"left_gripper":0.0,"right_joints":[0,0,0,0,0,0],"right_gripper":0.0,"time_from_start":0.0}]'></textarea>
+      <div class="plan-actions">
+        <button class="btn-primary" onclick="app.executeTrajectory()">&#9654; Execute Trajectory</button>
+        <button class="btn-secondary btn-sm" onclick="app.loadTrajExample()">Load Example</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">ROS2 Interface</div>
+      <div class="ros2-info">
+        <div><span class="ros2-label">Action</span> /bimanual_teleop/follow_joint_trajectory</div>
+        <div><span class="ros2-label">Sub   </span> /bimanual_teleop/joint_trajectory</div>
+        <div><span class="ros2-label">Sub   </span> /bimanual_teleop/target_joint_state</div>
+        <div><span class="ros2-label">Pub   </span> /bimanual_teleop/status</div>
+        <div style="margin-top:6px;">
+          <span class="ros2-label">Status</span>
+          <span id="ros2-node-status" style="color:var(--text-dim)">checking…</span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /motion-plan-panel -->
+
+  <!-- ── Gripper Panel ─────────────────────────────────────────────────── -->
+  <div id="gripper-panel" style="display:none;">
+    <div class="card">
+      <div class="card-title">Gripper Control — Arms hold position</div>
+      <div class="gripper-ctrl-grid">
+
+        <!-- Left gripper -->
+        <div class="gripper-ctrl-card">
+          <div class="gripper-ctrl-label">
+            <span class="arm-icon left-icon">L</span>
+            Left Gripper
+          </div>
+          <div class="gripper-bar gripper-ctrl-bar">
+            <div class="gripper-fill" id="gripper-bar-left" style="width:0%"></div>
+          </div>
+          <div class="gripper-pct" id="gripper-pct-left">0%</div>
+          <div class="gripper-toggle-row">
+            <button class="gripper-toggle-btn gripper-open-btn"  id="btn-gripper-left-open"
+                    onclick="app.setGripper('left', 0.0)" disabled>
+              &#8679; OPEN
+            </button>
+            <button class="gripper-toggle-btn gripper-close-btn" id="btn-gripper-left-close"
+                    onclick="app.setGripper('left', 1.0)" disabled>
+              &#8681; CLOSE
+            </button>
+          </div>
+        </div>
+
+        <!-- Right gripper -->
+        <div class="gripper-ctrl-card">
+          <div class="gripper-ctrl-label">
+            <span class="arm-icon right-icon">R</span>
+            Right Gripper
+          </div>
+          <div class="gripper-bar gripper-ctrl-bar">
+            <div class="gripper-fill" id="gripper-bar-right" style="width:0%"></div>
+          </div>
+          <div class="gripper-pct" id="gripper-pct-right">0%</div>
+          <div class="gripper-toggle-row">
+            <button class="gripper-toggle-btn gripper-open-btn"  id="btn-gripper-right-open"
+                    onclick="app.setGripper('right', 0.0)" disabled>
+              &#8679; OPEN
+            </button>
+            <button class="gripper-toggle-btn gripper-close-btn" id="btn-gripper-right-close"
+                    onclick="app.setGripper('right', 1.0)" disabled>
+              &#8681; CLOSE
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div><!-- /gripper-panel -->
+
+</main>
+
+<!-- ── Status Bar ────────────────────────────────────────────────────────── -->
+<div id="status-bar">
+  <span id="status-msg">Ready</span>
+  <span id="ws-status" class="disconnected">&#9679; WS disconnected</span>
+</div>
+
+<!-- ── Settings Modal ────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="settings-modal">
+  <div class="modal">
+    <h2>
+      Settings
+      <button class="modal-close" onclick="app.closeSettings()">&#10005;</button>
+    </h2>
+
+    <div class="settings-section">
+      <h3>Robot Connection</h3>
+      <div class="setting-row">
+        <label>Left Robot IP</label>
+        <input type="text" id="s-robot-left-ip" placeholder="192.168.1.20" />
+      </div>
+      <div class="setting-row">
+        <label>Right Robot IP</label>
+        <input type="text" id="s-robot-right-ip" placeholder="192.168.1.10" />
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>GELLO Devices</h3>
+      <div class="setting-row">
+        <label>Left GELLO Port</label>
+        <input type="text" id="s-gello-left-port" placeholder="/dev/serial/by-id/usb-FTDI_..." />
+      </div>
+      <div class="setting-row">
+        <label>Right GELLO Port</label>
+        <input type="text" id="s-gello-right-port" placeholder="/dev/serial/by-id/usb-FTDI_..." />
+      </div>
+      <div class="setting-row" style="align-items:flex-start;">
+        <label style="padding-top:4px;">Left GELLO Config (JSON)</label>
+        <textarea class="json-editor" id="s-gello-left-cfg"></textarea>
+      </div>
+      <div class="setting-row" style="align-items:flex-start;">
+        <label style="padding-top:4px;">Right GELLO Config (JSON)</label>
+        <textarea class="json-editor" id="s-gello-right-cfg"></textarea>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Control Parameters</h3>
+      <div class="setting-row">
+        <label>Control Rate (Hz)</label>
+        <input type="number" id="s-ctrl-hz" min="10" max="200" step="5" />
+      </div>
+      <div class="setting-row">
+        <label>ServoJ Velocity</label>
+        <input type="number" id="s-sv-vel" min="0.01" max="2.0" step="0.05" />
+      </div>
+      <div class="setting-row">
+        <label>ServoJ Acceleration</label>
+        <input type="number" id="s-sv-acc" min="0.01" max="2.0" step="0.05" />
+      </div>
+      <div class="setting-row">
+        <label>ServoJ Lookahead Time</label>
+        <input type="number" id="s-sv-look" min="0.03" max="0.2" step="0.01" />
+      </div>
+      <div class="setting-row">
+        <label>ServoJ Gain</label>
+        <input type="number" id="s-sv-gain" min="100" max="2000" step="50" />
+      </div>
+      <div class="setting-row">
+        <label>MoveJ Speed</label>
+        <input type="number" id="s-mj-speed" min="0.01" max="3.14" step="0.05" />
+      </div>
+      <div class="setting-row">
+        <label>MoveJ Acceleration</label>
+        <input type="number" id="s-mj-accel" min="0.01" max="3.14" step="0.05" />
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="app.closeSettings()">Cancel</button>
+      <button class="btn-primary" onclick="app.saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast Container ───────────────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

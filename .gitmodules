@@ -1,0 +1,6 @@
+[submodule "gello_software"]
+	path = gello_software
+	url = https://github.com/kenoventa/gello_software.git
+[submodule "bimanual_ur10e"]
+	path = bimanual_ur10e
+	url = https://github.com/kenoventa/bimanual_ur10e.git

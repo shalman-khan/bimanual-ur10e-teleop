@@ -1,0 +1,8 @@
+.git
+**/.git
+screenshots
+*.md
+*.png
+**/__pycache__
+**/*.pyc
+**/*.pyo
