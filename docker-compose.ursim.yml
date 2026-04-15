@@ -1,0 +1,84 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  URSim offline test environment
+#
+#  Runs two UR10e simulators + the teleop server on an isolated bridge
+#  network.  MockGelloAgent produces sinusoidal joint motion so you can
+#  confirm the full control path without any real hardware.
+#
+#  Usage:
+#    docker compose -f docker-compose.ursim.yml up --build
+#
+#  Then open:
+#    http://localhost:6081   — Polyscope (left robot)
+#    http://localhost:6082   — Polyscope (right robot)
+#    http://localhost:8080   — Teleop Web UI
+#
+#  In the Web UI:
+#    1. Click "Connect Robots"   (connects to URSim via RTDE)
+#    2. Click "Connect GELLO"    (mock — sinusoidal sweep)
+#    3. Switch to Teleop Active  → watch both robots move in Polyscope
+#
+#  The left robot is reachable at  172.30.0.20  (same subnet as default left IP
+#  but on the sim network — no settings change needed).
+#  The right robot is at           172.30.0.10.
+# ════════════════════════════════════════════════════════════════════════════
+
+networks:
+  simnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+
+  # ── Left UR10e simulator ─────────────────────────────────────────────────
+  ursim_left:
+    image: universalrobots/ursim_e-series
+    environment:
+      - ROBOT_MODEL=UR10
+    networks:
+      simnet:
+        ipv4_address: 172.30.0.20
+    ports:
+      - "6081:6080"   # noVNC Polyscope — http://localhost:6081
+    restart: unless-stopped
+
+  # ── Right UR10e simulator ────────────────────────────────────────────────
+  ursim_right:
+    image: universalrobots/ursim_e-series
+    environment:
+      - ROBOT_MODEL=UR10
+    networks:
+      simnet:
+        ipv4_address: 172.30.0.10
+    ports:
+      - "6082:6080"   # noVNC Polyscope — http://localhost:6082
+    restart: unless-stopped
+
+  # ── Teleop server ────────────────────────────────────────────────────────
+  teleop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bimanual_teleop:latest
+    networks:
+      simnet:
+        ipv4_address: 172.30.0.5
+    ports:
+      - "8080:8080"
+    volumes:
+      - teleop_sim_settings:/workspace/settings
+    environment:
+      - MOCK_GELLO=1                # real RTDE to URSim, sinusoidal mock GELLO
+      - ROBOT_LEFT_IP=172.30.0.20   # override settings — point at URSim left
+      - ROBOT_RIGHT_IP=172.30.0.10  # override settings — point at URSim right
+      - ROS_DOMAIN_ID=0
+    command: server
+    depends_on:
+      - ursim_left
+      - ursim_right
+
+volumes:
+  teleop_sim_settings:
+    driver: local

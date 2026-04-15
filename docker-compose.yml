@@ -1,0 +1,55 @@
+version: '3.8'
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Bimanual UR10e Teleop — Docker Compose
+#
+#  Usage:
+#    docker compose up --build          # build + start web server
+#    docker compose up -d               # start in background
+#    docker compose exec teleop bash    # shell into running container
+#
+#  Rosbag recording (inside container shell):
+#    ros2 launch bimanual_ur10e offline.launch.py
+#    ros2 bag record /robot1/joint_states /robot2/joint_states /joint_states
+#
+#  Web UI: http://localhost:8080
+# ════════════════════════════════════════════════════════════════════════════
+
+services:
+  teleop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bimanual_teleop:latest
+    container_name: bimanual_teleop
+
+    # host networking lets the container reach 192.168.1.x robots directly
+    # and exposes :8080 on the host without port mapping.
+    network_mode: host
+
+
+    # privileged + /dev mount gives access to GELLO USB serial devices
+    privileged: true
+    volumes:
+      - /dev:/dev                          # GELLO Dynamixel USB passthrough
+      - teleop_settings:/workspace/settings # persistent settings across restarts
+      - ./fastdds_no_shm.xml:/workspace/fastdds_no_shm.xml:ro  # FastDDS UDP-only profile
+
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      # Disable FastDDS shared-memory transport so topics are reachable from
+      # the host via UDP loopback (network_mode: host shares the network
+      # namespace, but not /dev/shm, so SHM transport breaks cross-boundary).
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/workspace/fastdds_no_shm.xml
+
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+    # Override CMD to start an interactive shell instead of the server:
+    #   docker compose run --rm teleop bash
+    command: server
+
+volumes:
+  teleop_settings:
+    driver: local
