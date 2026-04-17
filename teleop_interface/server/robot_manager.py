@@ -113,10 +113,12 @@ class RobotManager:
         for gello, attr in [(self._gello_left, '_gello_ref_left'),
                             (self._gello_right, '_gello_ref_right')]:
             if gello is not None:
-                try:
-                    setattr(self, attr, np.array(gello.act({})[:6]))
-                except Exception:
-                    pass
+                for _attempt in range(5):
+                    try:
+                        setattr(self, attr, np.array(gello.act({})[:6]))
+                        break
+                    except Exception:
+                        time.sleep(0.01)
 
         for robot, attr in [(self._robot_left, '_robot_ref_left'),
                             (self._robot_right, '_robot_ref_right')]:
@@ -311,8 +313,9 @@ class RobotManager:
                             delta = gello_now - gello_ref
                             arm_q = (robot_ref + delta).tolist()
                         else:
-                            # Fallback (no reference captured): absolute mode
-                            arm_q = gello_now.tolist()
+                            # Reference not yet captured — hold current robot
+                            # position rather than jumping to absolute GELLO pose.
+                            arm_q = robot.r_inter.getActualQ()
 
                         robot.robot.servoJ(
                             arm_q, sv_vel, sv_acc, sv_dt, sv_look, sv_gain
