@@ -121,6 +121,7 @@ class BimanualTeleopROS2Node:
             from trajectory_msgs.msg import JointTrajectory
             from sensor_msgs.msg import JointState
             from std_msgs.msg import String
+            from geometry_msgs.msg import WrenchStamped
 
             rclpy.init()
 
@@ -151,6 +152,16 @@ class BimanualTeleopROS2Node:
                     )
                     self_n._gripper2_pub   = self_n.create_publisher(
                         JointState, "/gripper2/joint_states", 10
+                    )
+
+                    # Wrench publishers — TCP force/torque from RTDE
+                    #   robot1 = right arm → /robot1/wrench
+                    #   robot2 = left  arm → /robot2/wrench
+                    self_n._wrench1_pub = self_n.create_publisher(
+                        WrenchStamped, "/robot1/wrench", 10
+                    )
+                    self_n._wrench2_pub = self_n.create_publisher(
+                        WrenchStamped, "/robot2/wrench", 10
                     )
 
                     # ── Subscribers ───────────────────────────────────────
@@ -185,6 +196,7 @@ class BimanualTeleopROS2Node:
                     # publish carries a genuinely new reading.
                     self_n.create_timer(1.0 / 50, self_n._pub_arm_joint_states)
                     self_n.create_timer(1.0 / 50, self_n._pub_gripper_joint_states)
+                    self_n.create_timer(1.0 / 50, self_n._pub_wrench)
 
                     self_n.get_logger().info(
                         "BimanualTeleop ROS2 node ready.\n"
@@ -195,7 +207,9 @@ class BimanualTeleopROS2Node:
                         "  Pub    : /robot1/joint_states             (50 Hz, right arm)\n"
                         "  Pub    : /robot2/joint_states             (50 Hz, left arm)\n"
                         "  Pub    : /gripper1/joint_states           (50 Hz, right gripper)\n"
-                        "  Pub    : /gripper2/joint_states           (50 Hz, left gripper)"
+                        "  Pub    : /gripper2/joint_states           (50 Hz, left gripper)\n"
+                        "  Pub    : /robot1/wrench                   (50 Hz, right arm FT)\n"
+                        "  Pub    : /robot2/wrench                   (50 Hz, left arm FT)"
                     )
 
                 # ── Callbacks ─────────────────────────────────────────────
@@ -343,6 +357,34 @@ class BimanualTeleopROS2Node:
                     g2.name         = ["gripper2_finger_joint"]
                     g2.position     = [float(snap["left_gripper"])]
                     self_n._gripper2_pub.publish(g2)
+
+                def _pub_wrench(self_n):
+                    """50 Hz — TCP force/torque from RTDE getActualTCPForce().
+                    robot1 (right arm) → /robot1/wrench
+                    robot2 (left  arm) → /robot2/wrench
+                    Frame: tool (TCP) frame, units N / Nm.
+                    """
+                    snap = rm.shared.snapshot()
+                    now  = self_n.get_clock().now().to_msg()
+
+                    def _make_wrench(w, frame_id):
+                        msg = WrenchStamped()
+                        msg.header.stamp    = now
+                        msg.header.frame_id = frame_id
+                        msg.wrench.force.x  = w[0]
+                        msg.wrench.force.y  = w[1]
+                        msg.wrench.force.z  = w[2]
+                        msg.wrench.torque.x = w[3]
+                        msg.wrench.torque.y = w[4]
+                        msg.wrench.torque.z = w[5]
+                        return msg
+
+                    self_n._wrench1_pub.publish(
+                        _make_wrench(snap["right_wrench"], "robot1_tool0")
+                    )
+                    self_n._wrench2_pub.publish(
+                        _make_wrench(snap["left_wrench"],  "robot2_tool0")
+                    )
 
             node = _TeleopNode()
             self._available = True
