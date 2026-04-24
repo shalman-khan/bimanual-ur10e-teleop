@@ -33,6 +33,8 @@ class SharedRobotState:
         self.left_gripper: float       = 0.0
         self.right_joints:  List[float] = [0.0] * 6
         self.right_gripper: float       = 0.0
+        self.left_wrench:  List[float] = [0.0] * 6  # [Fx, Fy, Fz, Tx, Ty, Tz] N/Nm
+        self.right_wrench: List[float] = [0.0] * 6
         self.robot_left_connected:  bool = False
         self.robot_right_connected: bool = False
         self.gello_left_connected:  bool = False
@@ -49,6 +51,13 @@ class SharedRobotState:
             self.right_joints  = [float(v) for v in joints[:6]]
             self.right_gripper = float(gripper)
 
+    def update_wrench(self, side: str, wrench: Any) -> None:
+        with self._lock:
+            if side == 'left':
+                self.left_wrench  = [float(v) for v in wrench[:6]]
+            else:
+                self.right_wrench = [float(v) for v in wrench[:6]]
+
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             return {
@@ -56,6 +65,8 @@ class SharedRobotState:
                 "left_gripper":           self.left_gripper,
                 "right_joints":           list(self.right_joints),
                 "right_gripper":          self.right_gripper,
+                "left_wrench":            list(self.left_wrench),
+                "right_wrench":           list(self.right_wrench),
                 "robot_left_connected":   self.robot_left_connected,
                 "robot_right_connected":  self.robot_right_connected,
                 "gello_left_connected":   self.gello_left_connected,
@@ -369,6 +380,15 @@ class RobotManager:
                                           else self.shared.right_gripper)
                         except Exception as exc:
                             print(f"[Control] passive read error: {exc}")
+
+            # Read FT sensor wrench every iteration regardless of state
+            for robot, side in [(self._robot_left, 'left'), (self._robot_right, 'right')]:
+                if robot is not None:
+                    try:
+                        w = robot.r_inter.getActualTCPForce()
+                        self.shared.update_wrench(side, w)
+                    except Exception:
+                        pass
 
             # Maintain loop rate (servoJ blocks for sv_dt, so remaining ≈ 0
             # in TELEOP_ACTIVE; in passive mode we still pace at hz)
