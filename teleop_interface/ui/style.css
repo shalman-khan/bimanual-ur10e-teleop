@@ -550,6 +550,37 @@ main {
 /* ── Gripper Control Panel ──────────────────────────────────────────────── */
 #gripper-panel { display: none; }
 
+.gripper-delay-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.gripper-delay-row label {
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.gripper-delay-row input {
+  width: 80px;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  text-align: center;
+}
+
+.gripper-delay-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .gripper-ctrl-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
