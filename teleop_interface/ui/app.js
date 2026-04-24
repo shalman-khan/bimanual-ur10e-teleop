@@ -405,16 +405,33 @@ const app = {
     ], null, 2);
   },
 
-  async setGripper(side, position) {
+  async _doSetGripper(side, position) {
     const res = await post('/api/gripper', { side, position });
     if (res.error) {
       toast(res.error, 'error');
     } else {
-      // Optimistically update local state so buttons reflect new position
       if (side === 'left'  || side === 'both') state.leftGripper  = position;
       if (side === 'right' || side === 'both') state.rightGripper = position;
       renderUI();
     }
+  },
+
+  setGripper(side, position) {
+    const delaySec = Math.max(0, parseFloat(el('gripper-delay')?.value) || 0);
+    const label    = side.charAt(0).toUpperCase() + side.slice(1);
+    const action   = position <= 0 ? 'OPEN' : 'CLOSE';
+
+    if (delaySec <= 0) {
+      app._doSetGripper(side, position);
+      return;
+    }
+
+    toast(`${label} gripper ${action} in ${delaySec}s\u2026`, 'info', delaySec * 1000 + 500);
+
+    setTimeout(() => {
+      toast(`${label} gripper ${action} — executing`, 'success');
+      app._doSetGripper(side, position);
+    }, delaySec * 1000);
   },
 
   async fetchSettings() {
@@ -513,13 +530,13 @@ function dot(id, connected) {
 
 function statusMsg(msg) { setEl('status-msg', msg); }
 
-function toast(msg, type = 'info') {
+function toast(msg, type = 'info', durationMs = 4000) {
   const c = el('toast-container');
   const d = document.createElement('div');
   d.className   = `toast ${type}`;
   d.textContent = msg;
   c.appendChild(d);
-  setTimeout(() => d.remove(), 4000);
+  setTimeout(() => d.remove(), durationMs);
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
