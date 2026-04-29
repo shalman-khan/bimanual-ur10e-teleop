@@ -100,6 +100,7 @@
     <button class="tab-btn active" id="tab-teleop"   onclick="app.switchMode('teleop')">Teleop</button>
     <button class="tab-btn"        id="tab-motion"   onclick="app.switchMode('motion_plan')">Motion Plan</button>
     <button class="tab-btn"        id="tab-gripper"  onclick="app.switchMode('gripper')">Gripper</button>
+    <button class="tab-btn"        id="tab-keyboard" onclick="app.switchMode('keyboard')">&#9000; Keyboard</button>
   </div>
 
   <!-- ── Motion Plan Panel (shown in motion_plan mode) ─────────────────── -->
@@ -170,6 +171,71 @@
     </div>
 
   </div><!-- /motion-plan-panel -->
+
+  <!-- ── Keyboard TCP Teleop Panel ────────────────────────────────────── -->
+  <div id="keyboard-panel" style="display:none;">
+    <div class="card">
+      <div class="card-title">Keyboard TCP Teleop — Cartesian control, GELLO passive</div>
+
+      <div class="kb-controls-row">
+        <div class="kb-activate-area">
+          <button class="btn-primary" id="btn-kb-activate" onclick="app.toggleKeyboardTeleop()">
+            &#9654; Activate Keyboard Teleop
+          </button>
+          <span id="kb-status-label" style="font-size:12px;color:var(--text-dim);margin-left:12px;"></span>
+        </div>
+        <div class="kb-speed-area">
+          <label>Linear (m/s)</label>
+          <input type="number" id="kb-lin-speed" value="0.05" min="0.005" max="0.5" step="0.005"
+                 oninput="app.onKbSpeedChange()" />
+          <label style="margin-left:10px;">Rotation (rad/s)</label>
+          <input type="number" id="kb-rot-speed" value="0.3" min="0.05" max="2.0" step="0.05"
+                 oninput="app.onKbSpeedChange()" />
+        </div>
+      </div>
+
+      <div class="kb-grid">
+
+        <!-- Left Arm -->
+        <div class="kb-arm-card">
+          <div class="kb-arm-title"><span class="arm-icon left-icon">L</span> Left Arm — TCP</div>
+          <table class="kb-key-table">
+            <thead><tr><th>Axis</th><th>+ (key)</th><th>− (key)</th></tr></thead>
+            <tbody>
+              <tr><td>X translate</td><td><kbd>W</kbd></td><td><kbd>S</kbd></td></tr>
+              <tr><td>Y translate</td><td><kbd>A</kbd></td><td><kbd>D</kbd></td></tr>
+              <tr><td>Z translate</td><td><kbd>Q</kbd></td><td><kbd>E</kbd></td></tr>
+              <tr><td>Rx rotate</td>  <td><kbd>R</kbd></td><td><kbd>F</kbd></td></tr>
+              <tr><td>Ry rotate</td>  <td><kbd>T</kbd></td><td><kbd>G</kbd></td></tr>
+              <tr><td>Rz rotate</td>  <td><kbd>Y</kbd></td><td><kbd>H</kbd></td></tr>
+              <tr class="kb-gripper-row"><td>Gripper Open</td>  <td colspan="2"><kbd>Z</kbd></td></tr>
+              <tr class="kb-gripper-row"><td>Gripper Close</td> <td colspan="2"><kbd>X</kbd></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Right Arm -->
+        <div class="kb-arm-card">
+          <div class="kb-arm-title"><span class="arm-icon right-icon">R</span> Right Arm — TCP</div>
+          <table class="kb-key-table">
+            <thead><tr><th>Axis</th><th>+ (key)</th><th>− (key)</th></tr></thead>
+            <tbody>
+              <tr><td>X translate</td><td><kbd>I</kbd></td><td><kbd>K</kbd></td></tr>
+              <tr><td>Y translate</td><td><kbd>J</kbd></td><td><kbd>L</kbd></td></tr>
+              <tr><td>Z translate</td><td><kbd>U</kbd></td><td><kbd>O</kbd></td></tr>
+              <tr><td>Rx rotate</td>  <td><kbd>P</kbd></td><td><kbd>;</kbd></td></tr>
+              <tr><td>Ry rotate</td>  <td><kbd>[</kbd></td><td><kbd>'</kbd></td></tr>
+              <tr><td>Rz rotate</td>  <td><kbd>]</kbd></td><td><kbd>\</kbd></td></tr>
+              <tr class="kb-gripper-row"><td>Gripper Open</td>  <td colspan="2"><kbd>N</kbd></td></tr>
+              <tr class="kb-gripper-row"><td>Gripper Close</td> <td colspan="2"><kbd>M</kbd></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+      <p class="kb-hint">Hold a key to move continuously. Release to stop. Velocities are in the robot base frame. Keys only captured when this tab is active.</p>
+    </div>
+  </div><!-- /keyboard-panel -->
 
   <!-- ── Gripper Panel ─────────────────────────────────────────────────── -->
   <div id="gripper-panel" style="display:none;">

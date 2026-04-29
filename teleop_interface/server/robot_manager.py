@@ -95,6 +95,16 @@ class RobotManager:
         self._robot_ref_left:  Optional[np.ndarray] = None
         self._robot_ref_right: Optional[np.ndarray] = None
 
+        # Keyboard TCP teleop state
+        # vel: [vx, vy, vz, wrx, wry, wrz, gripper_dir]; values -1/0/+1
+        self._kb_vel_left:     List[float] = [0.0] * 7
+        self._kb_vel_right:    List[float] = [0.0] * 7
+        self._kb_gripper_left:  float = 0.0
+        self._kb_gripper_right: float = 0.0
+        self._kb_lin_speed:    float = 0.05   # m/s per axis
+        self._kb_rot_speed:    float = 0.3    # rad/s per axis
+        self._kb_lock = threading.Lock()
+
         # Control loop
         self._ctl_thread:  Optional[threading.Thread] = None
         self._ctl_running: bool = False
@@ -104,11 +114,20 @@ class RobotManager:
     # ─── State-change hook ────────────────────────────────────────────────
 
     def _on_state_change(self, old: SystemState, new: SystemState) -> None:
-        """Stop servoJ when leaving ACTIVE; capture reference when entering ACTIVE."""
         if old is SystemState.TELEOP_ACTIVE:
             self._stop_servoj()
+        if old is SystemState.KEYBOARD_TELEOP:
+            self._stop_speedl()
+            with self._kb_lock:
+                self._kb_vel_left  = [0.0] * 7
+                self._kb_vel_right = [0.0] * 7
         if new is SystemState.TELEOP_ACTIVE:
             self._capture_teleop_reference()
+        if new is SystemState.KEYBOARD_TELEOP:
+            snap = self.shared.snapshot()
+            with self._kb_lock:
+                self._kb_gripper_left  = snap["left_gripper"]
+                self._kb_gripper_right = snap["right_gripper"]
 
     def _capture_teleop_reference(self) -> None:
         """
@@ -144,6 +163,27 @@ class RobotManager:
                                     if robot is self._robot_left
                                     else self.shared.right_joints)
                         setattr(self, attr, np.array(fallback))
+                except Exception:
+                    pass
+
+    def set_keyboard_key(self, side: str, axis: int, direction: float) -> None:
+        """axis: 0=X 1=Y 2=Z 3=Rx 4=Ry 5=Rz 6=gripper. direction: -1/0/+1."""
+        with self._kb_lock:
+            if side == "left":
+                self._kb_vel_left[axis]  = direction
+            else:
+                self._kb_vel_right[axis] = direction
+
+    def set_keyboard_speed(self, lin: float, rot: float) -> None:
+        with self._kb_lock:
+            self._kb_lin_speed = max(0.005, min(0.5,  lin))
+            self._kb_rot_speed = max(0.05,  min(2.0,  rot))
+
+    def _stop_speedl(self) -> None:
+        for robot in (self._robot_left, self._robot_right):
+            if robot is not None:
+                try:
+                    robot.robot.speedStop(0.5)
                 except Exception:
                     pass
 
@@ -309,7 +349,71 @@ class RobotManager:
         while self._ctl_running:
             t0 = time.monotonic()
 
-            if self._sm.state is SystemState.TELEOP_ACTIVE:
+            if self._sm.state is SystemState.KEYBOARD_TELEOP:
+                with self._kb_lock:
+                    vel_l      = list(self._kb_vel_left)
+                    vel_r      = list(self._kb_vel_right)
+                    lin_speed  = self._kb_lin_speed
+                    rot_speed  = self._kb_rot_speed
+                    grip_l     = self._kb_gripper_left
+                    grip_r     = self._kb_gripper_right
+
+                gripper_step = 0.3 * period   # normalized/s at 30%/s
+
+                # Build Cartesian velocity vectors [vx, vy, vz, wrx, wry, wrz]
+                def _build_tcp_vel(vel):
+                    return [
+                        vel[0] * lin_speed, vel[1] * lin_speed, vel[2] * lin_speed,
+                        vel[3] * rot_speed, vel[4] * rot_speed, vel[5] * rot_speed,
+                    ]
+
+                tcp_vel_l = _build_tcp_vel(vel_l)
+                tcp_vel_r = _build_tcp_vel(vel_r)
+                moving_l  = any(v != 0 for v in vel_l[:6])
+                moving_r  = any(v != 0 for v in vel_r[:6])
+
+                if self._robot_left is not None:
+                    try:
+                        if moving_l:
+                            self._robot_left.robot.speedL(tcp_vel_l, 0.5, period * 3)
+                        else:
+                            self._robot_left.robot.speedStop(0.5)
+                        if self._robot_left._use_gripper and vel_l[6] != 0:
+                            grip_l = max(0.0, min(1.0, grip_l + vel_l[6] * gripper_step))
+                            self._robot_left.gripper.move(int(grip_l * 255), 255, 10)
+                    except Exception as exc:
+                        print(f"[KB] left arm error: {exc}")
+
+                if self._robot_right is not None:
+                    try:
+                        if moving_r:
+                            self._robot_right.robot.speedL(tcp_vel_r, 0.5, period * 3)
+                        else:
+                            self._robot_right.robot.speedStop(0.5)
+                        if self._robot_right._use_gripper and vel_r[6] != 0:
+                            grip_r = max(0.0, min(1.0, grip_r + vel_r[6] * gripper_step))
+                            self._robot_right.gripper.move(int(grip_r * 255), 255, 10)
+                    except Exception as exc:
+                        print(f"[KB] right arm error: {exc}")
+
+                with self._kb_lock:
+                    self._kb_gripper_left  = grip_l
+                    self._kb_gripper_right = grip_r
+
+                # Update shared state from actual robot positions
+                for robot, update_fn, gripper_val in [
+                    (self._robot_left,  self.shared.update_left,  grip_l),
+                    (self._robot_right, self.shared.update_right, grip_r),
+                ]:
+                    if robot is not None:
+                        try:
+                            joints = np.array(robot.r_inter.getActualQ())
+                            if np.any(np.abs(joints) > 1e-6):
+                                update_fn(joints, gripper_val)
+                        except Exception:
+                            pass
+
+            elif self._sm.state is SystemState.TELEOP_ACTIVE:
 
                 def _cmd_arm(robot, gello, update_fn, gello_ref, robot_ref):
                     try:

@@ -22,6 +22,7 @@ class SystemState(Enum):
     IDLE                   = "idle"
     TELEOP_PASSIVE         = "teleop_passive"
     TELEOP_ACTIVE          = "teleop_active"
+    KEYBOARD_TELEOP        = "keyboard_teleop"
     MOTION_PLAN_IDLE       = "motion_plan_idle"
     MOTION_PLAN_EXECUTING  = "motion_plan_executing"
 
@@ -33,10 +34,17 @@ VALID_TRANSITIONS: dict[SystemState, Set[SystemState]] = {
     },
     SystemState.TELEOP_PASSIVE: {
         SystemState.TELEOP_ACTIVE,
+        SystemState.KEYBOARD_TELEOP,
         SystemState.MOTION_PLAN_IDLE,
         SystemState.IDLE,
     },
     SystemState.TELEOP_ACTIVE: {
+        SystemState.TELEOP_PASSIVE,
+        SystemState.KEYBOARD_TELEOP,
+        SystemState.MOTION_PLAN_IDLE,
+        SystemState.IDLE,
+    },
+    SystemState.KEYBOARD_TELEOP: {
         SystemState.TELEOP_PASSIVE,
         SystemState.MOTION_PLAN_IDLE,
         SystemState.IDLE,

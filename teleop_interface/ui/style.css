@@ -547,6 +547,104 @@ main {
   font-weight: 700;
 }
 
+/* ── Keyboard TCP Teleop Panel ──────────────────────────────────────────── */
+#keyboard-panel { display: none; }
+
+.kb-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kb-activate-area { display: flex; align-items: center; gap: 8px; }
+
+.kb-speed-area {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+
+.kb-speed-area input[type="number"] {
+  width: 70px;
+  padding: 4px 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+.kb-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 700px) { .kb-grid { grid-template-columns: 1fr; } }
+
+.kb-arm-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.kb-arm-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kb-key-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.kb-key-table th {
+  text-align: left;
+  color: var(--text-dim);
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.kb-key-table td { padding: 4px 6px; color: var(--text); }
+.kb-key-table tr:hover td { background: rgba(255,255,255,0.03); }
+.kb-gripper-row td { color: var(--amber); }
+
+kbd {
+  display: inline-block;
+  padding: 1px 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--blue);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.kb-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 4px;
+}
+
 /* ── Gripper Control Panel ──────────────────────────────────────────────── */
 #gripper-panel { display: none; }
 
