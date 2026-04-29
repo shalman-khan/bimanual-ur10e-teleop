@@ -291,6 +291,55 @@ async def api_execute_trajectory(req: TrajectoryRequest):
     return {"status": "executing", "num_points": len(points)}
 
 
+# ── Keyboard TCP Teleop ───────────────────────────────────────────────────────
+class KeyboardKeyRequest(BaseModel):
+    side:      str    # "left" | "right"
+    axis:      int    # 0=X 1=Y 2=Z 3=Rx 4=Ry 5=Rz 6=gripper
+    direction: float  # -1, 0, +1
+
+
+class KeyboardSpeedRequest(BaseModel):
+    linear:   float   # m/s  (default 0.05)
+    rotation: float   # rad/s (default 0.3)
+
+
+@app.post("/api/keyboard_teleop/activate")
+async def api_kb_activate():
+    current = state_machine.state
+    if current is SystemState.IDLE:
+        return {"error": "Connect to robots first", "state": current.value}
+    if current is SystemState.MOTION_PLAN_EXECUTING:
+        return {"error": "Cannot activate while executing", "state": current.value}
+    if current is SystemState.TELEOP_ACTIVE:
+        state_machine.transition(SystemState.TELEOP_PASSIVE)
+    if state_machine.state is not SystemState.KEYBOARD_TELEOP:
+        ok = state_machine.transition(SystemState.KEYBOARD_TELEOP)
+        if not ok:
+            return {"error": "Transition failed", "state": state_machine.state.value}
+    return {"state": state_machine.state.value}
+
+
+@app.post("/api/keyboard_teleop/deactivate")
+async def api_kb_deactivate():
+    if state_machine.state is SystemState.KEYBOARD_TELEOP:
+        state_machine.transition(SystemState.TELEOP_PASSIVE)
+    return {"state": state_machine.state.value}
+
+
+@app.post("/api/keyboard_teleop/key")
+async def api_kb_key(req: KeyboardKeyRequest):
+    if state_machine.state is not SystemState.KEYBOARD_TELEOP:
+        return {"error": "Not in keyboard teleop mode"}
+    robot_manager.set_keyboard_key(req.side, req.axis, req.direction)
+    return {"ok": True}
+
+
+@app.post("/api/keyboard_teleop/speed")
+async def api_kb_speed(req: KeyboardSpeedRequest):
+    robot_manager.set_keyboard_speed(req.linear, req.rotation)
+    return {"ok": True}
+
+
 # ── Gripper Control ──────────────────────────────────────────────────────────
 class GripperRequest(BaseModel):
     side:     str    # "left" | "right" | "both"

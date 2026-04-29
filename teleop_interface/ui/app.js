@@ -4,6 +4,27 @@
 const API  = '';
 const WS   = `ws://${location.host}/ws`;
 
+// ── Keyboard teleop key map — TCP axes ────────────────────────────────────────
+// axis: 0=X 1=Y 2=Z 3=Rx 4=Ry 5=Rz 6=gripper; dir: +1/-1
+const KB_MAP = {
+  // Left arm
+  'w':{side:'left', axis:0, dir:+1}, 's':{side:'left', axis:0, dir:-1},
+  'a':{side:'left', axis:1, dir:+1}, 'd':{side:'left', axis:1, dir:-1},
+  'q':{side:'left', axis:2, dir:+1}, 'e':{side:'left', axis:2, dir:-1},
+  'r':{side:'left', axis:3, dir:+1}, 'f':{side:'left', axis:3, dir:-1},
+  't':{side:'left', axis:4, dir:+1}, 'g':{side:'left', axis:4, dir:-1},
+  'y':{side:'left', axis:5, dir:+1}, 'h':{side:'left', axis:5, dir:-1},
+  'z':{side:'left', axis:6, dir:-1}, 'x':{side:'left', axis:6, dir:+1},
+  // Right arm
+  'i':{side:'right',axis:0, dir:+1}, 'k':{side:'right',axis:0, dir:-1},
+  'j':{side:'right',axis:1, dir:+1}, 'l':{side:'right',axis:1, dir:-1},
+  'u':{side:'right',axis:2, dir:+1}, 'o':{side:'right',axis:2, dir:-1},
+  'p':{side:'right',axis:3, dir:+1}, ';':{side:'right',axis:3, dir:-1},
+  '[':{side:'right',axis:4, dir:+1}, "'":{side:'right',axis:4, dir:-1},
+  ']':{side:'right',axis:5, dir:+1}, '\\':{side:'right',axis:5,dir:-1},
+  'n':{side:'right',axis:6, dir:-1}, 'm':{side:'right',axis:6, dir:+1},
+};
+
 const JOINT_LABELS = [
   'Shoulder Pan', 'Shoulder Lift', 'Elbow',
   'Wrist 1', 'Wrist 2', 'Wrist 3'
@@ -63,6 +84,7 @@ function handleStateUpdate(msg) {
   state.rightJoints    = msg.right_joints  || state.rightJoints;
   state.rightGripper   = msg.right_gripper ?? state.rightGripper;
   state.motionPlanStatus = msg.motion_plan_status ?? state.motionPlanStatus;
+  if (state.systemState !== 'keyboard_teleop' && _kbHeld.size > 0) _kbHeld.clear();
   renderUI();
 }
 
@@ -148,13 +170,29 @@ function renderUI() {
   }
 
   // ── Mode tabs ─────────────────────────────────────────────────────────────
-  el('tab-teleop').classList.toggle('active',   state.mode === 'teleop');
-  el('tab-motion').classList.toggle('active',   state.mode === 'motion_plan');
-  el('tab-gripper').classList.toggle('active',  state.mode === 'gripper');
+  el('tab-teleop').classList.toggle('active',    state.mode === 'teleop');
+  el('tab-motion').classList.toggle('active',    state.mode === 'motion_plan');
+  el('tab-gripper').classList.toggle('active',   state.mode === 'gripper');
+  el('tab-keyboard').classList.toggle('active',  state.mode === 'keyboard');
 
   // ── Panel visibility ──────────────────────────────────────────────────────
   el('motion-plan-panel').style.display = state.mode === 'motion_plan' ? 'block' : 'none';
   el('gripper-panel').style.display     = state.mode === 'gripper'     ? 'block' : 'none';
+  el('keyboard-panel').style.display    = state.mode === 'keyboard'    ? 'block' : 'none';
+
+  // ── Keyboard panel ─────────────────────────────────────────────────────────
+  const kbActive = state.systemState === 'keyboard_teleop';
+  const btnKb    = el('btn-kb-activate');
+  const kbLabel  = el('kb-status-label');
+  if (btnKb) {
+    btnKb.textContent = kbActive ? '⏹ Deactivate' : '▶ Activate Keyboard Teleop';
+    btnKb.className   = kbActive ? 'btn-danger' : 'btn-primary';
+    btnKb.disabled    = isIdle || executing;
+  }
+  if (kbLabel) {
+    kbLabel.textContent = kbActive ? '● ACTIVE — hold keys to move TCP' : '';
+    kbLabel.style.color = kbActive ? 'var(--green)' : 'var(--text-dim)';
+  }
 
   // ── Gripper panel ─────────────────────────────────────────────────────────
   const canGripper = anyRobot && !isIdle && !executing;
@@ -325,16 +363,24 @@ const app = {
       toast('Connect to robots first', 'error');
       return;
     }
+
+    // Leaving keyboard tab — deactivate keyboard teleop first
+    if (state.mode === 'keyboard' && mode !== 'keyboard') {
+      await app._deactivateKeyboard();
+    }
+
     state.mode = mode;
 
-    if (mode === 'gripper') {
-      // Arms must be passive so they hold position while gripper is controlled.
-      // Transition TELEOP_ACTIVE → TELEOP_PASSIVE silently.
+    if (mode === 'gripper' || mode === 'keyboard') {
       if (state.systemState === 'teleop_active') {
         const res = await post('/api/teleop/state', { state: 'passive' });
         if (res.state) state.systemState = res.state;
       }
     } else {
+      if (state.systemState === 'keyboard_teleop') {
+        const res = await post('/api/keyboard_teleop/deactivate');
+        if (res.state) state.systemState = res.state;
+      }
       const res = await post('/api/mode', { mode });
       if (res.error) toast(res.error, 'error');
       if (res.state) state.systemState = res.state;
@@ -432,6 +478,35 @@ const app = {
       toast(`${label} gripper ${action} — executing`, 'success');
       app._doSetGripper(side, position);
     }, delaySec * 1000);
+  },
+
+  async toggleKeyboardTeleop() {
+    if (state.systemState === 'keyboard_teleop') {
+      await app._deactivateKeyboard();
+    } else {
+      const res = await post('/api/keyboard_teleop/activate');
+      if (res.error) { toast(res.error, 'error'); return; }
+      if (res.state) state.systemState = res.state;
+      toast('Keyboard TCP teleop active — hold keys to move', 'success');
+    }
+    renderUI();
+  },
+
+  async _deactivateKeyboard() {
+    for (const k of Array.from(_kbHeld)) {
+      const m = KB_MAP[k];
+      if (m) post('/api/keyboard_teleop/key', { side: m.side, axis: m.axis, direction: 0 });
+    }
+    _kbHeld.clear();
+    const res = await post('/api/keyboard_teleop/deactivate');
+    if (res.state) state.systemState = res.state;
+    toast('Keyboard teleop deactivated', 'info');
+  },
+
+  onKbSpeedChange() {
+    const lin = parseFloat(el('kb-lin-speed')?.value) || 0.05;
+    const rot = parseFloat(el('kb-rot-speed')?.value) || 0.3;
+    post('/api/keyboard_teleop/speed', { linear: lin, rotation: rot });
   },
 
   async fetchSettings() {
@@ -538,6 +613,30 @@ function toast(msg, type = 'info', durationMs = 4000) {
   c.appendChild(d);
   setTimeout(() => d.remove(), durationMs);
 }
+
+// ── Keyboard capture ──────────────────────────────────────────────────────────
+const _kbHeld = new Set();
+
+document.addEventListener('keydown', e => {
+  if (state.mode !== 'keyboard' || state.systemState !== 'keyboard_teleop') return;
+  if (e.repeat) return;
+  if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (!KB_MAP[k]) return;
+  e.preventDefault();
+  if (_kbHeld.has(k)) return;
+  _kbHeld.add(k);
+  const m = KB_MAP[k];
+  post('/api/keyboard_teleop/key', { side: m.side, axis: m.axis, direction: m.dir });
+});
+
+document.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (!_kbHeld.has(k)) return;
+  _kbHeld.delete(k);
+  const m = KB_MAP[k];
+  if (m) post('/api/keyboard_teleop/key', { side: m.side, axis: m.axis, direction: 0 });
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
