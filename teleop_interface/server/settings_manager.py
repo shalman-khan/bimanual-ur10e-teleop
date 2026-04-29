@@ -68,7 +68,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 
     # ── MoveJ Parameters (used in MOTION PLAN mode) ───────────────────────
     "movej_speed":        0.5,
-    "movej_acceleration": 0.3,
+    "movej_acceleration": 0.1,
 }
 
 

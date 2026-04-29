@@ -510,7 +510,7 @@ class RobotManager:
         right_joints:  List[float],
         right_gripper: float,
         speed:         float = 0.5,
-        accel:         float = 0.3,
+        accel:         float = 0.1,
     ) -> bool:
         """
         Blocking: move both arms to target joint state via moveJ (UR's own
