@@ -474,6 +474,9 @@ class RobotManager:
             right_joints:    list[float]
             right_gripper:   float
             time_from_start: float        (seconds from trajectory start)
+
+        Waypoints are linearly interpolated and streamed at 500 Hz so the
+        controller always receives a command before the previous dt expires.
         """
         if not self._sm.transition(SystemState.MOTION_PLAN_EXECUTING):
             return False
@@ -484,45 +487,109 @@ class RobotManager:
         sv_acc   = s.get("servoj_acceleration",   0.5)
         sv_look  = s.get("servoj_lookahead_time", 0.2)
         sv_gain  = s.get("servoj_gain",           300)
-        sv_dt    = 1.0 / 500
+        hz       = 500
+        sv_dt    = 1.0 / hz
         success  = False
+
+        def _lerp(a, b, alpha):
+            return [a[i] + (b[i] - a[i]) * alpha for i in range(len(a))]
 
         try:
             t_start = time.monotonic()
 
-            for i, pt in enumerate(points):
+            # Single-point trajectory: use moveJ so the robot plans a smooth
+            # approach from its current position instead of a servoJ impulse.
+            if len(points) == 1:
+                p = points[0]
+                s = self._settings.get()
+                ok_l = ok_r = True
+                def _mj(robot, joints, gripper_val, key):
+                    try:
+                        if robot is None:
+                            return True
+                        robot.robot.moveJ(joints, s.get("movej_speed", 0.5), s.get("movej_acceleration", 0.3))
+                        if robot._use_gripper:
+                            robot.gripper.move(int(gripper_val * 255), 255, 10)
+                        return True
+                    except Exception as exc:
+                        print(f"[Motion] single-point moveJ {key} error: {exc}")
+                        return False
+                results = {}
+                tl = threading.Thread(target=lambda: results.update({"l": _mj(self._robot_left,  p["left_joints"],  p.get("left_gripper",  0.0), "left")}),  daemon=True)
+                tr = threading.Thread(target=lambda: results.update({"r": _mj(self._robot_right, p["right_joints"], p.get("right_gripper", 0.0), "right")}), daemon=True)
+                tl.start(); tr.start()
+                tl.join();  tr.join()
+                self.shared.update_left(p["left_joints"],   p.get("left_gripper",  0.0))
+                self.shared.update_right(p["right_joints"], p.get("right_gripper", 0.0))
+                success = results.get("l", True) and results.get("r", True)
+                return success
+
+            for seg in range(len(points) - 1):
                 if self._sm.state is not SystemState.MOTION_PLAN_EXECUTING:
-                    break   # aborted via mode switch
+                    break
 
-                lj  = pt["left_joints"]
-                lg  = pt.get("left_gripper",  0.0)
-                rj  = pt["right_joints"]
-                rg  = pt.get("right_gripper", 0.0)
+                pa = points[seg]
+                pb = points[seg + 1]
+                t_a = pa.get("time_from_start", 0.0)
+                t_b = pb.get("time_from_start", 0.0)
+                duration = max(t_b - t_a, sv_dt)
+                n_steps  = max(1, int(round(duration * hz)))
 
-                if self._robot_left is not None:
-                    ts = self._robot_left.robot.initPeriod()
-                    self._robot_left.robot.servoJ(lj, sv_vel, sv_acc, sv_dt, sv_look, sv_gain)
-                    if self._robot_left._use_gripper:
-                        self._robot_left.gripper.move(int(lg * 255), 255, 10)
-                    self._robot_left.robot.waitPeriod(ts)
+                lj_a = pa["left_joints"];   lj_b = pb["left_joints"]
+                rj_a = pa["right_joints"];  rj_b = pb["right_joints"]
+                lg_a = pa.get("left_gripper",  0.0); lg_b = pb.get("left_gripper",  0.0)
+                rg_a = pa.get("right_gripper", 0.0); rg_b = pb.get("right_gripper", 0.0)
 
-                if self._robot_right is not None:
-                    ts = self._robot_right.robot.initPeriod()
-                    self._robot_right.robot.servoJ(rj, sv_vel, sv_acc, sv_dt, sv_look, sv_gain)
-                    if self._robot_right._use_gripper:
-                        self._robot_right.gripper.move(int(rg * 255), 255, 10)
-                    self._robot_right.robot.waitPeriod(ts)
+                for step in range(n_steps):
+                    if self._sm.state is not SystemState.MOTION_PLAN_EXECUTING:
+                        break
 
-                self.shared.update_left(lj,  lg)
-                self.shared.update_right(rj, rg)
+                    alpha = step / n_steps
+                    lj = _lerp(lj_a, lj_b, alpha)
+                    rj = _lerp(rj_a, rj_b, alpha)
+                    lg = lg_a + (lg_b - lg_a) * alpha
+                    rg = rg_a + (rg_b - rg_a) * alpha
 
-                # Sleep until next waypoint's scheduled time
-                if i < len(points) - 1:
-                    next_t    = points[i + 1].get("time_from_start", 0.0)
-                    wake_at   = t_start + next_t
-                    remaining = wake_at - time.monotonic()
+                    # Sleep until this step's scheduled wall-clock time
+                    step_t  = t_start + t_a + step * sv_dt
+                    remaining = step_t - time.monotonic()
                     if remaining > 0:
                         time.sleep(remaining)
+
+                    if self._robot_left is not None:
+                        self._robot_left.robot.servoJ(
+                            lj, sv_vel, sv_acc, sv_dt, sv_look, sv_gain
+                        )
+                        if self._robot_left._use_gripper:
+                            self._robot_left.gripper.move(int(lg * 255), 255, 10)
+
+                    if self._robot_right is not None:
+                        self._robot_right.robot.servoJ(
+                            rj, sv_vel, sv_acc, sv_dt, sv_look, sv_gain
+                        )
+                        if self._robot_right._use_gripper:
+                            self._robot_right.gripper.move(int(rg * 255), 255, 10)
+
+                    self.shared.update_left(lj,  lg)
+                    self.shared.update_right(rj, rg)
+
+            # Send final waypoint a few extra times so the robot settles there
+            if self._sm.state is SystemState.MOTION_PLAN_EXECUTING and points:
+                last = points[-1]
+                lj = last["left_joints"];  lg = last.get("left_gripper",  0.0)
+                rj = last["right_joints"]; rg = last.get("right_gripper", 0.0)
+                for _ in range(50):   # ~100 ms at 500 Hz
+                    if self._robot_left is not None:
+                        self._robot_left.robot.servoJ(
+                            lj, sv_vel, sv_acc, sv_dt, sv_look, sv_gain
+                        )
+                    if self._robot_right is not None:
+                        self._robot_right.robot.servoJ(
+                            rj, sv_vel, sv_acc, sv_dt, sv_look, sv_gain
+                        )
+                    time.sleep(sv_dt)
+                self.shared.update_left(lj,  lg)
+                self.shared.update_right(rj, rg)
 
             self._stop_servoj()
             success = True
