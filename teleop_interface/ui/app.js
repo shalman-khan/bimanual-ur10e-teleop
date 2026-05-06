@@ -597,7 +597,8 @@ const app = {
   async saveRosbag() {
     const res = await post('/api/rosbag/save');
     app._stopPhasePoll();
-    toast(`Bag saved → ${res.bag_path}`, 'success');
+    const path = res.filtered_bag_path || res.bag_path || '';
+    toast(`Filtered bag saved → ${path}`, 'success');
     app._showRosbagPhase('idle');
   },
 
@@ -671,22 +672,26 @@ const app = {
       </div>`;
       return;
     }
-    const ok      = report.pass;
-    const cls     = ok ? 'report-pass' : 'report-fail';
+    const ok  = report.pass;
+    const cls = ok ? 'report-pass' : 'report-fail';
     const verdict = ok
-      ? '✓  KEEP — clean demo'
+      ? '✓  KEEP — clean demo. Filtered bag saved.'
       : '✗  DISCARD — below 80% motion threshold<br>This bag will NOT produce a working policy.<br>DELETE IT and re-record.';
     const depthNote = report.has_depth ? '' :
       '<div class="report-row" style="color:var(--amber)"><span>⚠ No depth data</span><span>arm-only analysis</span></div>';
+    const filtPath = report.filtered_bag_path
+      ? `<div class="report-row"><span>Filtered bag</span><span style="font-family:monospace;font-size:10px;word-break:break-all">${report.filtered_bag_path}</span></div>`
+      : '';
     box.innerHTML = `
       <div class="rosbag-report-box ${cls}">
         <div class="report-title">BAG QUALITY REPORT</div>
-        <div class="report-row"><span>Raw duration</span><span>${(report.raw_duration_s||0).toFixed(1)}s</span></div>
+        <div class="report-row"><span>Raw recording</span><span>${(report.raw_duration_s||0).toFixed(1)}s — ${report.total_frames||0} frames</span></div>
+        <div class="report-row"><span>Frames kept</span><span>${report.frames_kept||0} (motion detected)</span></div>
+        <div class="report-row"><span>Frames removed</span><span>${report.frames_skipped||0} (static pauses)</span></div>
         <div class="report-row"><span>Filtered duration</span><span>${(report.filtered_duration_s||0).toFixed(1)}s</span></div>
-        <div class="report-row"><span>Frames kept</span><span>${report.frames_kept||0}</span></div>
-        <div class="report-row"><span>Frames skipped</span><span>${report.frames_skipped||0}</span></div>
         <div class="report-row"><span>Motion quality</span><span>${(report.quality_pct||0).toFixed(1)}%  (target ≥80%)</span></div>
         ${depthNote}
+        ${filtPath}
         <div class="report-verdict ${cls}">${verdict}</div>
       </div>`;
   },

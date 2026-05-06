@@ -1,12 +1,20 @@
 """
-bag_analyzer.py — Post-recording quality analyzer for bimanual DP3 bags.
+bag_analyzer.py — Post-recording quality analyzer and filter for bimanual DP3.
 
-Reads a recorded bag, applies the dual-condition pause filter on the stored
-joint and depth data, and returns quality metrics without modifying the bag.
+Reads the original bag, applies the dual-condition pause filter, and writes a
+new filtered bag that has static (thinking-pause) frames removed.
+
+Filter logic (skip a frame only when ALL are simultaneously true):
+  - Both robot1 AND robot2 joints are static relative to last kept frame
+  - Depth scene is static relative to last kept frame
+  - Not the first frame
+
+Motion quality (%) = frames_kept / total_depth_frames × 100
+This measures what fraction of the original demo had actual motion.
 """
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import numpy as np
 
@@ -14,7 +22,6 @@ MOTION_THRESHOLD = 0.015   # rad — max joint delta across either arm's 6 joint
 VISION_THRESHOLD = 0.003   # m   — mean absolute depth change over valid pixels
 MIN_MOTION_PCT   = 80      # %   — pass threshold
 MIN_VALID_PIX    = 5_000
-FRAME_DT         = 0.05    # s   — assumed per-frame duration (20 Hz)
 
 ARM1_TOPIC  = '/robot1/joint_states'   # right arm
 ARM2_TOPIC  = '/robot2/joint_states'   # left arm
@@ -23,23 +30,26 @@ DEPTH_TOPIC = '/zed/zed_node/depth/depth_registered'
 
 def analyze_bag(bag_path: str) -> Dict[str, Any]:
     """
-    Read a rosbag and compute motion-quality metrics.
+    Read the original bag, apply the pause filter, and write a filtered bag.
 
-    Returns a dict with:
-        raw_duration_s, filtered_duration_s, total_frames,
-        frames_kept, frames_skipped, quality_pct, pass,
-        has_depth, bag_path, error (optional)
+    The filtered bag is written to <bag_path>_filtered and contains only
+    frames where at least one arm OR the visual scene was moving.
+
+    Returns a dict with quality metrics and the filtered bag path.
     """
     base = {
-        'raw_duration_s':      0.0,
-        'filtered_duration_s': 0.0,
-        'total_frames':        0,
-        'frames_kept':         0,
-        'frames_skipped':      0,
-        'quality_pct':         0.0,
-        'pass':                False,
-        'has_depth':           False,
-        'bag_path':            bag_path,
+        'raw_duration_s':        0.0,
+        'filtered_duration_s':   0.0,
+        'total_frames':          0,
+        'frames_kept':           0,
+        'frames_skipped':        0,
+        'quality_pct':           0.0,
+        'pass':                  False,
+        'has_arm1':              False,
+        'has_arm2':              False,
+        'has_depth':             False,
+        'bag_path':              bag_path,
+        'filtered_bag_path':     None,
     }
 
     try:
@@ -52,187 +62,152 @@ def analyze_bag(bag_path: str) -> Dict[str, Any]:
     if not os.path.exists(bag_path):
         return {**base, 'error': f'Bag path not found: {bag_path}'}
 
-    try:
-        storage = rosbag2_py.StorageOptions(uri=bag_path, storage_id='sqlite3')
-        conv    = rosbag2_py.ConverterOptions('', '')
-        reader  = rosbag2_py.SequentialReader()
-        reader.open(storage, conv)
+    filtered_bag_path = bag_path + '_filtered'
 
-        available  = {t.name for t in reader.get_all_topics_and_types()}
+    try:
+        # ── Open reader (all topics, no filter) ───────────────────────────
+        storage_r = rosbag2_py.StorageOptions(uri=bag_path, storage_id='sqlite3')
+        conv      = rosbag2_py.ConverterOptions('', '')
+        reader    = rosbag2_py.SequentialReader()
+        reader.open(storage_r, conv)
+
+        topic_meta = reader.get_all_topics_and_types()
+        available  = {t.name for t in topic_meta}
         has_arm1   = ARM1_TOPIC  in available
         has_arm2   = ARM2_TOPIC  in available
         has_depth  = DEPTH_TOPIC in available
 
-        read_topics = [t for t in [ARM1_TOPIC, ARM2_TOPIC, DEPTH_TOPIC] if t in available]
-        if read_topics:
-            reader.set_filter(rosbag2_py.StorageFilter(topics=read_topics))
+        # ── Open writer for filtered bag ──────────────────────────────────
+        os.makedirs(os.path.dirname(os.path.abspath(filtered_bag_path)), exist_ok=True)
+        storage_w = rosbag2_py.StorageOptions(uri=filtered_bag_path, storage_id='sqlite3')
+        writer    = rosbag2_py.SequentialWriter()
+        writer.open(storage_w, conv)
+        for t in topic_meta:
+            writer.create_topic(t)
 
-        arm1_msgs  = []   # robot1 (right arm): (timestamp_ns, [float …])
-        arm2_msgs  = []   # robot2 (left arm):  (timestamp_ns, [float …])
-        depth_msgs = []   # (timestamp_ns, np.ndarray)
+        # ── Streaming filter ──────────────────────────────────────────────
+        # Buffer messages between depth frames; flush to writer on keep,
+        # discard on skip.  Only deserialize arm joints and depth images.
+        buffer     = []          # (topic, raw_data, timestamp_ns)
+        latest_a1  = None        # most recent robot1 joints in buffer window
+        latest_a2  = None        # most recent robot2 joints in buffer window
+        prev_a1    = None        # joints at last KEPT frame
+        prev_a2    = None
+        prev_depth = None        # depth array at last KEPT frame
+        first      = True
+        kept       = 0
+        skipped    = 0
+        all_ts     = []
 
         while reader.has_next():
             topic, data, ts = reader.read_next()
-            try:
-                if topic == ARM1_TOPIC:
+            all_ts.append(ts)
+
+            if topic == ARM1_TOPIC:
+                try:
                     msg = deserialize_message(data, JointState)
-                    arm1_msgs.append((ts, list(msg.position)))
-                elif topic == ARM2_TOPIC:
+                    latest_a1 = list(msg.position)
+                except Exception:
+                    pass
+                buffer.append((topic, data, ts))
+
+            elif topic == ARM2_TOPIC:
+                try:
                     msg = deserialize_message(data, JointState)
-                    arm2_msgs.append((ts, list(msg.position)))
-                elif topic == DEPTH_TOPIC:
+                    latest_a2 = list(msg.position)
+                except Exception:
+                    pass
+                buffer.append((topic, data, ts))
+
+            elif topic == DEPTH_TOPIC:
+                # Frame decision point
+                try:
                     msg = deserialize_message(data, Image)
-                    arr = np.frombuffer(bytes(msg.data),
-                                        dtype=np.float32).reshape(msg.height, msg.width)
-                    depth_msgs.append((ts, arr))
-            except Exception:
-                continue
+                    depth_arr = np.frombuffer(bytes(msg.data),
+                                              dtype=np.float32).reshape(
+                                              msg.height, msg.width)
+                except Exception:
+                    depth_arr = None
+
+                buffer.append((topic, data, ts))
+
+                arm1_static = _arm_is_static(prev_a1, latest_a1)
+                arm2_static = _arm_is_static(prev_a2, latest_a2)
+                # Skip only when BOTH arms AND vision are simultaneously static
+                arm_static  = arm1_static and arm2_static
+                vis_static  = _vision_is_static(prev_depth, depth_arr)
+                skip        = arm_static and vis_static and not first
+
+                if skip:
+                    skipped += 1
+                    buffer.clear()
+                else:
+                    kept += 1
+                    for t_item, d_item, ts_item in buffer:
+                        try:
+                            writer.write(t_item, d_item, ts_item)
+                        except Exception:
+                            pass
+                    buffer.clear()
+                    prev_a1    = latest_a1
+                    prev_a2    = latest_a2
+                    prev_depth = depth_arr
+                    first      = False
+
+            else:
+                buffer.append((topic, data, ts))
+
+        # Write any remaining buffered messages (non-depth tail)
+        if not first and buffer:
+            for t_item, d_item, ts_item in buffer:
+                try:
+                    writer.write(t_item, d_item, ts_item)
+                except Exception:
+                    pass
 
         del reader
+        del writer
 
     except Exception as exc:
         return {**base, 'error': str(exc)}
 
-    joint_msgs = arm1_msgs or arm2_msgs   # prefer whichever is available
-    has_arm    = bool(arm1_msgs or arm2_msgs)
-
-    if not has_arm and not depth_msgs:
-        return {**base, 'error': 'No joint or depth data found in bag.'}
-
-    all_ts         = ([t for t, _ in arm1_msgs] + [t for t, _ in arm2_msgs]
-                      + [t for t, _ in depth_msgs])
+    # ── Quality metrics ───────────────────────────────────────────────────
     raw_duration_s = (max(all_ts) - min(all_ts)) / 1e9 if len(all_ts) > 1 else 0.0
-
-    if has_depth and depth_msgs:
-        kept, skipped = _filter_with_depth(arm1_msgs, arm2_msgs, depth_msgs)
-    elif has_arm:
-        kept, skipped = _filter_arm_only(arm1_msgs, arm2_msgs)
-    else:
-        kept, skipped = 0, 0
-
-    total       = kept + skipped
-    quality_pct = kept / max(1, total) * 100
+    total          = kept + skipped
+    quality_pct    = kept / max(1, total) * 100
+    frame_dt       = raw_duration_s / max(1, total)   # actual per-frame duration
+    filtered_dur   = kept * frame_dt
 
     return {
         'raw_duration_s':      raw_duration_s,
-        'filtered_duration_s': kept * FRAME_DT,
+        'filtered_duration_s': filtered_dur,
         'total_frames':        total,
         'frames_kept':         kept,
         'frames_skipped':      skipped,
         'quality_pct':         quality_pct,
         'pass':                quality_pct >= MIN_MOTION_PCT,
-        'has_arm1':            bool(arm1_msgs),
-        'has_arm2':            bool(arm2_msgs),
-        'has_depth':           bool(depth_msgs),
+        'has_arm1':            has_arm1,
+        'has_arm2':            has_arm2,
+        'has_depth':           has_depth,
         'bag_path':            bag_path,
+        'filtered_bag_path':   filtered_bag_path,
     }
 
 
-# ── Filter implementations ────────────────────────────────────────────────────
-
-def _nearest_joints(msgs_sorted, ts):
-    """Return joint positions from msgs_sorted closest to (and at or before) ts."""
-    idx = 0
-    for i, (t, _) in enumerate(msgs_sorted):
-        if t <= ts:
-            idx = i
-        else:
-            break
-    return msgs_sorted[idx][1] if msgs_sorted else None
-
-
-def _filter_with_depth(arm1_msgs, arm2_msgs, depth_msgs):
-    """
-    Skip a depth frame only when BOTH arms AND vision are simultaneously static.
-    Either arm moving is enough to keep the frame.
-    Compare against the last KEPT frame so slow continuous motion accumulates.
-    """
-    arm1_msgs  = sorted(arm1_msgs,  key=lambda x: x[0])
-    arm2_msgs  = sorted(arm2_msgs,  key=lambda x: x[0])
-    depth_msgs = sorted(depth_msgs, key=lambda x: x[0])
-
-    kept = skipped = 0
-    prev_arm1 = prev_arm2 = prev_depth = None
-    first = True
-
-    for d_ts, depth_arr in depth_msgs:
-        curr_arm1 = _nearest_joints(arm1_msgs, d_ts)
-        curr_arm2 = _nearest_joints(arm2_msgs, d_ts)
-
-        # Arm is static only if BOTH arms are static (or unavailable)
-        arm1_static = _arm_is_static(prev_arm1, curr_arm1)
-        arm2_static = _arm_is_static(prev_arm2, curr_arm2)
-        arm_static  = arm1_static and arm2_static
-
-        vis_static  = _vision_is_static(prev_depth, depth_arr)
-        skip        = arm_static and vis_static and not first
-
-        if skip:
-            skipped += 1
-        else:
-            kept     += 1
-            prev_arm1 = curr_arm1
-            prev_arm2 = curr_arm2
-            prev_depth = depth_arr
-            first      = False
-
-    return kept, skipped
-
-
-def _filter_arm_only(arm1_msgs, arm2_msgs):
-    """Arm-only fallback when depth is unavailable. Keep if either arm moves."""
-    # Merge both arm streams sorted by timestamp
-    all_msgs = sorted(arm1_msgs + arm2_msgs, key=lambda x: x[0])
-
-    # Build per-arm timeseries for joint lookup
-    arm1_sorted = sorted(arm1_msgs, key=lambda x: x[0])
-    arm2_sorted = sorted(arm2_msgs, key=lambda x: x[0])
-
-    kept = skipped = 0
-    prev_arm1 = prev_arm2 = None
-    first = True
-    seen_ts = set()
-
-    # Iterate at depth-equivalent rate: sample every ~50ms window
-    if not all_msgs:
-        return 0, 0
-
-    t_start = all_msgs[0][0]
-    t_end   = all_msgs[-1][0]
-    step_ns = int(0.05 * 1e9)   # 50 ms
-
-    t = t_start
-    while t <= t_end:
-        curr_arm1 = _nearest_joints(arm1_sorted, t)
-        curr_arm2 = _nearest_joints(arm2_sorted, t)
-
-        arm1_static = _arm_is_static(prev_arm1, curr_arm1)
-        arm2_static = _arm_is_static(prev_arm2, curr_arm2)
-        skip        = arm1_static and arm2_static and not first
-
-        if skip:
-            skipped += 1
-        else:
-            kept     += 1
-            prev_arm1 = curr_arm1
-            prev_arm2 = curr_arm2
-            first      = False
-
-        t += step_ns
-
-    return kept, skipped
-
+# ── Filter helpers ────────────────────────────────────────────────────────────
 
 def _arm_is_static(prev, curr) -> bool:
+    """True if max joint delta across all 6 joints is below threshold."""
     if prev is None or curr is None:
         return False
     return max(abs(c - p) for c, p in zip(curr, prev)) < MOTION_THRESHOLD
 
 
 def _vision_is_static(prev: np.ndarray, curr: np.ndarray) -> bool:
+    """True if mean absolute depth change over valid pixels is below threshold."""
     if prev is None or curr is None:
         return False
     valid = np.isfinite(prev) & np.isfinite(curr)
     if valid.sum() < MIN_VALID_PIX:
-        return False
+        return False   # sparse depth → assume moving (keep frame)
     return float(np.abs(curr[valid] - prev[valid]).mean()) < VISION_THRESHOLD
