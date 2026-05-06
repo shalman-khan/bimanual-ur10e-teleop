@@ -673,10 +673,10 @@ const app = {
       return;
     }
     const ok  = report.pass;
-    const cls = ok ? 'report-pass' : 'report-fail';
+    const cls = ok ? 'report-pass' : 'report-low';
     const verdict = ok
-      ? '✓  KEEP — clean demo. Filtered bag saved.'
-      : '✗  DISCARD — below 80% motion threshold<br>This bag will NOT produce a working policy.<br>DELETE IT and re-record.';
+      ? '✓  Good demo — motion target met.'
+      : `⚠  Motion quality below 80% target.<br>Try to move more continuously and reduce pauses.<br>Aim for &gt;80% (ideally &gt;85%).`;
     const depthNote = report.has_depth ? '' :
       '<div class="report-row" style="color:var(--amber)"><span>⚠ No depth data</span><span>arm-only analysis</span></div>';
     const filtPath = report.filtered_bag_path

@@ -1073,8 +1073,8 @@ textarea.json-editor:focus { outline: none; border-color: var(--accent); }
   padding: 10px 12px;
   font-size: 12px;
 }
-.report-pass { background: var(--green-dim); border: 1px solid #166534; }
-.report-fail { background: var(--red-dim);   border: 1px solid #991b1b; }
+.report-pass { background: var(--surface2); border: 1px solid #166534; }
+.report-low  { background: var(--surface2); border: 1px solid var(--border); }
 
 .report-title {
   font-weight: 700;
@@ -1101,4 +1101,4 @@ textarea.json-editor:focus { outline: none; border-color: var(--accent); }
   line-height: 1.5;
 }
 .report-pass .report-verdict { color: var(--green); }
-.report-fail .report-verdict { color: var(--red); }
+.report-low  .report-verdict { color: var(--amber); }
