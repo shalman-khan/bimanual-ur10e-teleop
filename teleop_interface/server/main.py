@@ -376,6 +376,23 @@ async def api_update_settings(data: Dict[str, Any]):
     return {"status": "saved", "settings": settings.get()}
 
 
+# ── Gripper Override ──────────────────────────────────────────────────────────
+class GripperOverrideRequest(BaseModel):
+    side:    str   # "left" | "right" | "both"
+    enabled: bool
+
+
+@app.get("/api/gripper/override")
+async def api_gripper_override_get():
+    return robot_manager.get_gripper_overrides()
+
+
+@app.post("/api/gripper/override")
+async def api_gripper_override_set(req: GripperOverrideRequest):
+    robot_manager.set_gripper_override(req.side, req.enabled)
+    return robot_manager.get_gripper_overrides()
+
+
 # ── Rosbag Recording ──────────────────────────────────────────────────────────
 RECORD_TOPICS = [
     "/robot1/joint_states",

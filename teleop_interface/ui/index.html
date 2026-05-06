@@ -282,6 +282,11 @@
           <div class="gripper-ctrl-label">
             <span class="arm-icon left-icon">L</span>
             Left Gripper
+            <label class="override-label" title="When checked, GELLO teleop will not move this gripper">
+              <input type="checkbox" id="chk-override-left"
+                     onchange="app.setGripperOverride('left', this.checked)" />
+              Teleop Override
+            </label>
           </div>
           <div class="gripper-bar gripper-ctrl-bar">
             <div class="gripper-fill" id="gripper-bar-left" style="width:0%"></div>
@@ -304,6 +309,11 @@
           <div class="gripper-ctrl-label">
             <span class="arm-icon right-icon">R</span>
             Right Gripper
+            <label class="override-label" title="When checked, GELLO teleop will not move this gripper">
+              <input type="checkbox" id="chk-override-right"
+                     onchange="app.setGripperOverride('right', this.checked)" />
+              Teleop Override
+            </label>
           </div>
           <div class="gripper-bar gripper-ctrl-bar">
             <div class="gripper-fill" id="gripper-bar-right" style="width:0%"></div>

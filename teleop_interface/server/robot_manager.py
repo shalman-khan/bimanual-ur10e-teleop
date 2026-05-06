@@ -95,6 +95,10 @@ class RobotManager:
         self._robot_ref_left:  Optional[np.ndarray] = None
         self._robot_ref_right: Optional[np.ndarray] = None
 
+        # Gripper teleop override — when True, GELLO teleop skips gripper commands
+        self._gripper_override_left:  bool = False
+        self._gripper_override_right: bool = False
+
         # Keyboard TCP teleop state
         # vel: [vx, vy, vz, wrx, wry, wrz, gripper_dir]; values -1/0/+1
         self._kb_vel_left:     List[float] = [0.0] * 7
@@ -415,7 +419,8 @@ class RobotManager:
 
             elif self._sm.state is SystemState.TELEOP_ACTIVE:
 
-                def _cmd_arm(robot, gello, update_fn, gello_ref, robot_ref):
+                def _cmd_arm(robot, gello, update_fn, gello_ref, robot_ref,
+                             override_gripper):
                     try:
                         obs          = gello.act({})   # (7,) = 6 arm + 1 gripper
                         gello_now    = obs[:6]
@@ -435,10 +440,13 @@ class RobotManager:
                         robot.robot.servoJ(
                             arm_q, sv_vel, sv_acc, sv_dt, sv_look, sv_gain
                         )
-                        if robot._use_gripper:
+                        if robot._use_gripper and not override_gripper:
                             robot.gripper.move(int(gripper * 255), 255, 10)
 
-                        update_fn(arm_q, gripper)
+                        update_fn(arm_q, gripper if not override_gripper else
+                                  (self.shared.left_gripper
+                                   if robot is self._robot_left
+                                   else self.shared.right_gripper))
                     except Exception as exc:
                         print(f"[Control] Arm command error: {exc}")
 
@@ -448,7 +456,8 @@ class RobotManager:
                         target=_cmd_arm,
                         args=(self._robot_left, self._gello_left,
                               self.shared.update_left,
-                              self._gello_ref_left, self._robot_ref_left),
+                              self._gello_ref_left, self._robot_ref_left,
+                              self._gripper_override_left),
                         daemon=True,
                     ))
                 if self._gello_right and self._robot_right:
@@ -456,7 +465,8 @@ class RobotManager:
                         target=_cmd_arm,
                         args=(self._robot_right, self._gello_right,
                               self.shared.update_right,
-                              self._gello_ref_right, self._robot_ref_right),
+                              self._gello_ref_right, self._robot_ref_right,
+                              self._gripper_override_right),
                         daemon=True,
                     ))
 
@@ -720,6 +730,19 @@ class RobotManager:
         ).start()
 
     # ─── Direct gripper control ───────────────────────────────────────────
+
+    def set_gripper_override(self, side: str, enabled: bool) -> None:
+        """Enable/disable teleop gripper override per arm."""
+        if side in ("left",  "both"):
+            self._gripper_override_left  = enabled
+        if side in ("right", "both"):
+            self._gripper_override_right = enabled
+
+    def get_gripper_overrides(self) -> Dict[str, bool]:
+        return {
+            "left":  self._gripper_override_left,
+            "right": self._gripper_override_right,
+        }
 
     def set_gripper(self, side: str, position: float) -> Dict[str, str]:
         """

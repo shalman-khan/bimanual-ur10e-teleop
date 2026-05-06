@@ -43,8 +43,10 @@ const state = {
   leftGripper:      0,
   rightJoints:      Array(6).fill(0),
   rightGripper:     0,
-  motionPlanStatus: null,
-  settings:         null,
+  motionPlanStatus:     null,
+  settings:             null,
+  gripperOverrideLeft:  false,
+  gripperOverrideRight: false,
 };
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -480,6 +482,18 @@ const app = {
     }, delaySec * 1000);
   },
 
+  async setGripperOverride(side, enabled) {
+    const res = await post('/api/gripper/override', { side, enabled });
+    if (res.left  !== undefined) state.gripperOverrideLeft  = res.left;
+    if (res.right !== undefined) state.gripperOverrideRight = res.right;
+    // Update checkbox visual state
+    const chkL = el('chk-override-left');
+    const chkR = el('chk-override-right');
+    if (chkL) chkL.checked = state.gripperOverrideLeft;
+    if (chkR) chkR.checked = state.gripperOverrideRight;
+    toast(`${side.charAt(0).toUpperCase()+side.slice(1)} gripper teleop override ${enabled ? 'enabled' : 'disabled'}`, 'info');
+  },
+
   async toggleKeyboardTeleop() {
     if (state.systemState === 'keyboard_teleop') {
       await app._deactivateKeyboard();
@@ -762,6 +776,15 @@ document.addEventListener('keyup', e => {
   if (status.right_joints) state.rightJoints = status.right_joints;
 
   renderUI();
+
+  // Sync gripper override state
+  const overrides = await get('/api/gripper/override');
+  if (overrides.left  !== undefined) state.gripperOverrideLeft  = overrides.left;
+  if (overrides.right !== undefined) state.gripperOverrideRight = overrides.right;
+  const chkL = el('chk-override-left');
+  const chkR = el('chk-override-right');
+  if (chkL) chkL.checked = state.gripperOverrideLeft;
+  if (chkR) chkR.checked = state.gripperOverrideRight;
 
   // Sync rosbag state (in case server was already recording before page load)
   const bagStatus = await get('/api/rosbag/status');
