@@ -554,9 +554,10 @@ const app = {
     const res = await post('/api/rosbag/start', { bag_dir: bagDir });
     if (res.error) { toast(res.error, 'error'); return; }
     toast(`Recording started → ${res.bag_path}`, 'success');
-    el('btn-start-bag').style.display = 'none';
-    el('btn-stop-bag').style.display  = '';
-    el('btn-check-topics').disabled   = true;
+    el('btn-start-bag').style.display   = 'none';
+    el('btn-stop-bag').style.display    = '';
+    el('btn-discard-bag').style.display = '';
+    el('btn-check-topics').disabled     = true;
     setEl('rosbag-status-line', `● Recording → ${res.bag_path}`);
     el('rosbag-status-line').style.color = 'var(--green)';
     app._startRosbagTimer();
@@ -566,11 +567,30 @@ const app = {
     const res = await post('/api/rosbag/stop');
     app._stopRosbagTimer();
     if (res.error) { toast(res.error, 'error'); return; }
-    toast(`Recording saved → ${res.bag_path}`, 'info');
-    el('btn-stop-bag').style.display  = 'none';
-    el('btn-start-bag').style.display = '';
-    el('btn-check-topics').disabled   = false;
-    setEl('rosbag-status-line', `Saved → ${res.bag_path}`);
+    toast(`Recording saved → ${res.bag_path}`, 'success');
+    app._rosbagIdleUI(`Saved → ${res.bag_path}`);
+  },
+
+  async discardRosbag() {
+    if (!confirm('Discard this recording? The bag file will be permanently deleted.')) return;
+    const res = await post('/api/rosbag/discard');
+    app._stopRosbagTimer();
+    if (res.error) { toast(res.error, 'error'); return; }
+    if (res.deleted) {
+      toast('Recording discarded and deleted.', 'info');
+      app._rosbagIdleUI('Recording discarded.');
+    } else {
+      toast(`Stopped but could not delete: ${res.bag_path}`, 'error');
+      app._rosbagIdleUI(`Stopped (delete failed) → ${res.bag_path}`);
+    }
+  },
+
+  _rosbagIdleUI(statusText) {
+    el('btn-stop-bag').style.display    = 'none';
+    el('btn-discard-bag').style.display = 'none';
+    el('btn-start-bag').style.display   = '';
+    el('btn-check-topics').disabled     = false;
+    setEl('rosbag-status-line', statusText);
     el('rosbag-status-line').style.color = 'var(--text-dim)';
   },
 
@@ -746,9 +766,10 @@ document.addEventListener('keyup', e => {
   // Sync rosbag state (in case server was already recording before page load)
   const bagStatus = await get('/api/rosbag/status');
   if (bagStatus.recording) {
-    el('btn-start-bag').style.display = 'none';
-    el('btn-stop-bag').style.display  = '';
-    el('btn-check-topics').disabled   = true;
+    el('btn-start-bag').style.display   = 'none';
+    el('btn-stop-bag').style.display    = '';
+    el('btn-discard-bag').style.display = '';
+    el('btn-check-topics').disabled     = true;
     setEl('rosbag-status-line', `● Recording → ${bagStatus.bag_path || ''}`);
     el('rosbag-status-line').style.color = 'var(--green)';
     app._startRosbagTimer();

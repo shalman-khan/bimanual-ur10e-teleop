@@ -471,23 +471,43 @@ async def api_rosbag_start(req: RosbagStartRequest):
         return {"error": str(exc)}
 
 
-@app.post("/api/rosbag/stop")
-async def api_rosbag_stop():
-    global _rosbag_proc, _rosbag_start_time
-
-    if _rosbag_proc is None or _rosbag_proc.poll() is not None:
-        return {"error": "Not recording"}
-
-    _rosbag_proc.terminate()
-    try:
-        _rosbag_proc.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        _rosbag_proc.kill()
-
-    path               = _rosbag_path
+def _kill_rosbag_proc() -> Optional[str]:
+    """Stop the recording process and return the bag path. Does not delete files."""
+    global _rosbag_proc, _rosbag_path, _rosbag_start_time
+    path = _rosbag_path
+    if _rosbag_proc is not None:
+        _rosbag_proc.terminate()
+        try:
+            _rosbag_proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            _rosbag_proc.kill()
     _rosbag_proc       = None
     _rosbag_start_time = None
+    return path
+
+
+@app.post("/api/rosbag/stop")
+async def api_rosbag_stop():
+    if _rosbag_proc is None or _rosbag_proc.poll() is not None:
+        return {"error": "Not recording"}
+    path = _kill_rosbag_proc()
     return {"status": "stopped", "bag_path": path}
+
+
+@app.post("/api/rosbag/discard")
+async def api_rosbag_discard():
+    import shutil
+    if _rosbag_proc is None or _rosbag_proc.poll() is not None:
+        return {"error": "Not recording"}
+    path = _kill_rosbag_proc()
+    deleted = False
+    if path and os.path.exists(path):
+        try:
+            shutil.rmtree(path)
+            deleted = True
+        except Exception as exc:
+            return {"status": "stopped_not_deleted", "bag_path": path, "error": str(exc)}
+    return {"status": "discarded", "bag_path": path, "deleted": deleted}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
