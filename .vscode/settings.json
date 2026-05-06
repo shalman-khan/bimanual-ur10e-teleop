@@ -1,0 +1,12 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/cartin/workspaces/ros_ur_driver/install/ur_robot_driver/lib/python3.12/site-packages",
+        "/home/cartin/workspaces/ros_ur_driver/install/ur_moveit_config/lib/python3.12/site-packages",
+        "/home/cartin/workspaces/ros_ur_driver/install/ur_dashboard_msgs/lib/python3.12/site-packages",
+        "/home/cartin/cartin_ws/install/cartin_ur10e/lib/python3.12/site-packages",
+        "/home/cartin/cartin_ws/install/cartin_promp/lib/python3.12/site-packages",
+        "/home/cartin/cartin_ws/install/cap_detect_pkg/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}
