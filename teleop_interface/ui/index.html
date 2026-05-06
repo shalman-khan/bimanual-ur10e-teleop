@@ -75,52 +75,46 @@
     <div class="card">
       <div class="card-title">&#9899; Rosbag Recording</div>
 
-      <div class="rosbag-folder-row">
-        <label for="rosbag-dir">Save to</label>
-        <input type="text" id="rosbag-dir" value="/workspace/bags" placeholder="/workspace/bags" />
+      <!-- IDLE: folder + check + start -->
+      <div id="rosbag-phase-idle">
+        <div class="rosbag-folder-row">
+          <label for="rosbag-dir">Save to</label>
+          <input type="text" id="rosbag-dir" value="/home/cartin/rosbag_ws" placeholder="/home/cartin/rosbag_ws" />
+        </div>
+        <div class="rosbag-btn-row">
+          <button class="btn-secondary btn-sm" id="btn-check-topics" onclick="app.checkTopics()">
+            &#128270; Check Topics
+          </button>
+          <button class="btn-primary btn-sm" id="btn-start-bag" onclick="app.startRosbag()" disabled>
+            &#9210; Start Recording
+          </button>
+        </div>
+        <div id="rosbag-topic-list" class="rosbag-topic-list" style="display:none;"></div>
+        <div id="rosbag-idle-status" style="font-size:12px;color:var(--text-dim);margin-top:6px;min-height:14px;"></div>
       </div>
 
-      <div class="rosbag-btn-row">
-        <button class="btn-secondary btn-sm" id="btn-check-topics" onclick="app.checkTopics()">
-          &#128270; Check Topics
-        </button>
-        <button class="btn-primary btn-sm"   id="btn-start-bag"   onclick="app.startRosbag()" disabled>
-          &#9210; Start Recording
-        </button>
-        <button class="btn-danger  btn-sm"   id="btn-stop-bag"    onclick="app.stopRosbag()"    style="display:none">
-          &#9209; Stop
-        </button>
-        <button class="btn-amber   btn-sm"   id="btn-discard-bag" onclick="app.discardRosbag()" style="display:none">
-          &#128465; Discard
-        </button>
+      <!-- RECORDING: status + stop -->
+      <div id="rosbag-phase-recording" style="display:none;">
+        <div id="rosbag-rec-label" class="rosbag-rec-label"></div>
+        <div id="rosbag-rec-path" style="font-size:11px;color:var(--text-dim);margin:3px 0 8px;word-break:break-all;"></div>
+        <button class="btn-danger btn-sm" onclick="app.stopRosbag()">&#9209; Stop Recording</button>
       </div>
 
-      <div id="rosbag-status-line" style="font-size:12px;color:var(--text-dim);margin-top:6px;min-height:16px;"></div>
+      <!-- PROCESSING: spinner -->
+      <div id="rosbag-phase-processing" style="display:none;">
+        <div class="rosbag-processing-label">&#9203; Analyzing recording quality&#8230;</div>
+        <div id="rosbag-proc-path" style="font-size:11px;color:var(--text-dim);margin-top:4px;word-break:break-all;"></div>
+      </div>
 
-      <div id="rosbag-topic-list" class="rosbag-topic-list" style="display:none;"></div>
-
-      <!-- Live HUD (shown only during recording) -->
-      <div id="rosbag-hud" style="display:none;">
-        <div class="rosbag-hud-state" id="rosbag-hud-state"></div>
-        <div class="rosbag-hud-bars" id="rosbag-hud-bars">
-          <span class="rosbag-bar-label">ARM</span>
-          <span class="rosbag-sensor-bar" id="rosbag-bar-arm"></span>
-          <span class="rosbag-bar-label" style="margin-left:12px">VISION</span>
-          <span class="rosbag-sensor-bar" id="rosbag-bar-vision"></span>
-        </div>
-        <div class="rosbag-hud-quality">
-          <span class="rosbag-bar-label">Quality</span>
-          <span class="rosbag-quality-track" id="rosbag-quality-bar"></span>
-          <span id="rosbag-quality-pct" style="font-size:12px;margin-left:6px;"></span>
-          <span style="font-size:11px;color:var(--text-dim);margin-left:4px;">target &gt; 80%</span>
-        </div>
-        <div id="rosbag-quality-warn" class="rosbag-quality-warn" style="display:none;">
-          &#9888; QUALITY TOO LOW &#8212; STOP AND RESTART THIS DEMO
+      <!-- DONE: report + save/discard -->
+      <div id="rosbag-phase-done" style="display:none;">
+        <div id="rosbag-report-box"></div>
+        <div class="rosbag-btn-row" style="margin-top:10px;">
+          <button class="btn-success btn-sm" id="btn-save-bag"    onclick="app.saveRosbag()">&#10003; Save</button>
+          <button class="btn-danger  btn-sm" id="btn-discard-bag" onclick="app.discardRosbag()">&#128465; Discard</button>
         </div>
       </div>
 
-      <!-- Quality report (shown after stop) -->
-      <div id="rosbag-report" class="rosbag-report" style="display:none;"></div>
     </div>
 
   </div><!-- /top-row -->

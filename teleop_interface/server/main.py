@@ -395,6 +395,8 @@ async def api_gripper_override_set(req: GripperOverrideRequest):
 
 
 # ── Rosbag Recording ──────────────────────────────────────────────────────────
+from bag_analyzer import analyze_bag
+
 RECORD_TOPICS = [
     "/robot1/joint_states",
     "/robot2/joint_states",
@@ -407,7 +409,7 @@ RECORD_TOPICS = [
     "/zed/zed_node/rgb/color/rect/image",
 ]
 
-STATS_FILE = "/tmp/smart_recorder_stats.json"
+DEFAULT_BAG_DIR = "/home/cartin/rosbag_ws"
 
 _ROS_SETUP = (
     "source /opt/ros/humble/setup.bash && "
@@ -415,18 +417,18 @@ _ROS_SETUP = (
     "source /workspace/install/setup.bash 2>/dev/null; "
 )
 
-_rosbag_proc: Optional[subprocess.Popen] = None
-_rosbag_path: Optional[str] = None
-_rosbag_start_time: Optional[datetime.datetime] = None
+_rosbag_proc:       Optional[subprocess.Popen]       = None
+_rosbag_path:       Optional[str]                    = None
+_rosbag_start_time: Optional[datetime.datetime]      = None
+_rosbag_phase:      str                              = "idle"   # idle|recording|processing|done
+_rosbag_report:     Optional[Dict[str, Any]]         = None
 
 
 def _check_topic_publishers(topic: str) -> int:
-    """Return publisher count for a topic, or -1 on error."""
     try:
-        env = os.environ.copy()
         result = subprocess.run(
             ["bash", "-c", f"{_ROS_SETUP}ros2 topic info {shlex.quote(topic)}"],
-            capture_output=True, text=True, timeout=6, env=env,
+            capture_output=True, text=True, timeout=6, env=os.environ.copy(),
         )
         for line in result.stdout.splitlines():
             if "Publisher count:" in line:
@@ -438,73 +440,69 @@ def _check_topic_publishers(topic: str) -> int:
 
 @app.get("/api/rosbag/status")
 async def api_rosbag_status():
-    recording = _rosbag_proc is not None and _rosbag_proc.poll() is None
     elapsed = None
-    if recording and _rosbag_start_time:
-        elapsed = (datetime.datetime.now() - _rosbag_start_time).seconds
+    if _rosbag_phase == "recording" and _rosbag_start_time:
+        elapsed = int((datetime.datetime.now() - _rosbag_start_time).total_seconds())
     return {
-        "recording": recording,
+        "phase":     _rosbag_phase,
         "bag_path":  _rosbag_path,
         "elapsed_s": elapsed,
+        "report":    _rosbag_report,
     }
 
 
 @app.post("/api/rosbag/check_topics")
 async def api_rosbag_check_topics():
-    loop = asyncio.get_event_loop()
+    loop    = asyncio.get_event_loop()
     results: Dict[str, int] = {}
-    tasks = {
-        topic: loop.run_in_executor(None, _check_topic_publishers, topic)
-        for topic in RECORD_TOPICS
-    }
+    tasks   = {t: loop.run_in_executor(None, _check_topic_publishers, t) for t in RECORD_TOPICS}
     for topic, fut in tasks.items():
         results[topic] = await fut
     return {"topics": results}
 
 
 class RosbagStartRequest(BaseModel):
-    bag_dir: str = "/workspace/bags"
+    bag_dir: str = DEFAULT_BAG_DIR
 
 
 @app.post("/api/rosbag/start")
 async def api_rosbag_start(req: RosbagStartRequest):
-    global _rosbag_proc, _rosbag_path, _rosbag_start_time
+    global _rosbag_proc, _rosbag_path, _rosbag_start_time, _rosbag_phase, _rosbag_report
 
-    if _rosbag_proc is not None and _rosbag_proc.poll() is None:
+    if _rosbag_phase == "recording":
         return {"error": "Already recording"}
+    if _rosbag_phase == "processing":
+        return {"error": "Postprocessing in progress — wait for report"}
 
-    bag_dir = req.bag_dir.rstrip("/") or "/workspace/bags"
+    bag_dir  = req.bag_dir.rstrip("/") or DEFAULT_BAG_DIR
     os.makedirs(bag_dir, exist_ok=True)
 
     ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     bag_path = f"{bag_dir}/session_{ts}"
-
-    script = "/workspace/teleop_interface/server/smart_recorder.py"
-    env    = os.environ.copy()
-    cmd    = f"{_ROS_SETUP}python3 {script} {shlex.quote(bag_path)}"
+    topics   = " ".join(RECORD_TOPICS)
+    cmd      = f"{_ROS_SETUP}ros2 bag record -o {shlex.quote(bag_path)} {topics}"
 
     try:
-        _rosbag_proc       = subprocess.Popen(["bash", "-c", cmd], env=env)
+        _rosbag_proc       = subprocess.Popen(["bash", "-c", cmd], env=os.environ.copy())
         _rosbag_path       = bag_path
         _rosbag_start_time = datetime.datetime.now()
+        _rosbag_phase      = "recording"
+        _rosbag_report     = None
         return {"status": "started", "bag_path": bag_path}
     except Exception as exc:
         return {"error": str(exc)}
 
 
-@app.get("/api/rosbag/stats")
-async def api_rosbag_stats():
-    try:
-        with open(STATS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return {"recording": False, "state": "idle"}
+@app.post("/api/rosbag/stop")
+async def api_rosbag_stop():
+    global _rosbag_proc, _rosbag_start_time, _rosbag_phase
 
+    if _rosbag_phase != "recording":
+        return {"error": "Not recording"}
 
-def _kill_rosbag_proc() -> Optional[str]:
-    """Stop the recording process and return the bag path. Does not delete files."""
-    global _rosbag_proc, _rosbag_path, _rosbag_start_time
     path = _rosbag_path
+
+    # Stop ros2 bag record
     if _rosbag_proc is not None:
         _rosbag_proc.terminate()
         try:
@@ -513,30 +511,69 @@ def _kill_rosbag_proc() -> Optional[str]:
             _rosbag_proc.kill()
     _rosbag_proc       = None
     _rosbag_start_time = None
-    return path
+    _rosbag_phase      = "processing"
+
+    # Analyze in background — non-blocking
+    asyncio.create_task(_run_analysis(path))
+
+    return {"status": "processing", "bag_path": path}
 
 
-@app.post("/api/rosbag/stop")
-async def api_rosbag_stop():
-    if _rosbag_proc is None or _rosbag_proc.poll() is not None:
-        return {"error": "Not recording"}
-    path = _kill_rosbag_proc()
-    return {"status": "stopped", "bag_path": path}
+async def _run_analysis(bag_path: str) -> None:
+    global _rosbag_phase, _rosbag_report
+    loop = asyncio.get_running_loop()
+    try:
+        report = await loop.run_in_executor(None, analyze_bag, bag_path)
+    except Exception as exc:
+        report = {
+            'error': str(exc),
+            'quality_pct': 0, 'pass': False,
+            'raw_duration_s': 0, 'filtered_duration_s': 0,
+            'frames_kept': 0, 'frames_skipped': 0,
+            'has_depth': False, 'bag_path': bag_path,
+        }
+    _rosbag_report = report
+    _rosbag_phase  = "done"
+
+
+@app.post("/api/rosbag/save")
+async def api_rosbag_save():
+    global _rosbag_phase, _rosbag_report
+    path          = _rosbag_path
+    _rosbag_phase  = "idle"
+    _rosbag_report = None
+    return {"status": "saved", "bag_path": path}
 
 
 @app.post("/api/rosbag/discard")
 async def api_rosbag_discard():
     import shutil
-    if _rosbag_proc is None or _rosbag_proc.poll() is not None:
-        return {"error": "Not recording"}
-    path = _kill_rosbag_proc()
+    global _rosbag_proc, _rosbag_path, _rosbag_start_time, _rosbag_phase, _rosbag_report
+
+    # Stop if still recording
+    if _rosbag_proc is not None and _rosbag_proc.poll() is None:
+        _rosbag_proc.terminate()
+        try:
+            _rosbag_proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            _rosbag_proc.kill()
+    _rosbag_proc       = None
+    _rosbag_start_time = None
+
+    path = _rosbag_path
     deleted = False
     if path and os.path.exists(path):
         try:
             shutil.rmtree(path)
             deleted = True
         except Exception as exc:
-            return {"status": "stopped_not_deleted", "bag_path": path, "error": str(exc)}
+            _rosbag_phase  = "idle"
+            _rosbag_report = None
+            return {"status": "error", "error": str(exc), "bag_path": path}
+
+    _rosbag_phase  = "idle"
+    _rosbag_report = None
+    _rosbag_path   = None
     return {"status": "discarded", "bag_path": path, "deleted": deleted}
 
 

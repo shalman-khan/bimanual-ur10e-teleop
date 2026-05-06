@@ -318,6 +318,22 @@ main {
 @media (max-width: 1000px) { .top-row { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 700px)  { .top-row { grid-template-columns: 1fr; } }
 
+/* ── Rosbag phase divs ───────────────────────────────────────────────────── */
+.rosbag-rec-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--green);
+  margin-bottom: 6px;
+  font-family: monospace;
+}
+
+.rosbag-processing-label {
+  font-size: 13px;
+  color: var(--amber);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
 /* ── Rosbag Card ─────────────────────────────────────────────────────────── */
 .rosbag-folder-row {
   display: flex;

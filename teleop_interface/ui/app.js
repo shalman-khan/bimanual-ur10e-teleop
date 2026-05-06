@@ -531,7 +531,8 @@ const app = {
     const btn = el('btn-check-topics');
     btn.disabled = true;
     btn.textContent = '⏳ Checking…';
-    setEl('rosbag-status-line', 'Checking topics — please wait…');
+    const idleStatus = el('rosbag-idle-status');
+    if (idleStatus) idleStatus.textContent = 'Checking topics — please wait…';
     el('rosbag-topic-list').style.display = 'none';
 
     const res = await post('/api/rosbag/check_topics');
@@ -545,10 +546,10 @@ const app = {
     const list   = el('rosbag-topic-list');
     list.style.display = 'flex';
     list.innerHTML = Object.entries(topics).map(([topic, count]) => {
-      const ok    = count > 0;
-      const cls   = ok ? 'rosbag-topic-ok' : 'rosbag-topic-err';
-      const icon  = ok ? '✓' : '✗';
-      const note  = ok ? `${count} pub` : 'no publishers';
+      const ok   = count > 0;
+      const cls  = ok ? 'rosbag-topic-ok' : 'rosbag-topic-err';
+      const icon = ok ? '✓' : '✗';
+      const note = ok ? `${count} pub` : 'no publishers';
       return `<div class="rosbag-topic-row ${cls}">
         <span>${icon}</span>
         <span class="rosbag-topic-name">${topic}</span>
@@ -557,204 +558,133 @@ const app = {
     }).join('');
 
     const missing = Object.entries(topics).filter(([,v]) => v <= 0).map(([t]) => t);
-    if (allOk) {
-      setEl('rosbag-status-line', 'All topics publishing — ready to record.');
-      el('rosbag-status-line').style.color = 'var(--green)';
-    } else {
-      setEl('rosbag-status-line', `${missing.length} topic(s) not publishing.`);
-      el('rosbag-status-line').style.color = 'var(--amber)';
+    if (idleStatus) {
+      idleStatus.textContent = allOk
+        ? 'All topics publishing — ready to record.'
+        : `${missing.length} topic(s) not publishing.`;
+      idleStatus.style.color = allOk ? 'var(--green)' : 'var(--amber)';
     }
     el('btn-start-bag').disabled = false;
   },
 
   async startRosbag() {
-    const bagDir = el('rosbag-dir')?.value?.trim() || '/workspace/bags';
+    const bagDir = el('rosbag-dir')?.value?.trim() || '/home/cartin/rosbag_ws';
     const res = await post('/api/rosbag/start', { bag_dir: bagDir });
     if (res.error) { toast(res.error, 'error'); return; }
-    toast(`Recording started → ${res.bag_path}`, 'success');
-    el('btn-start-bag').style.display   = 'none';
-    el('btn-stop-bag').style.display    = '';
-    el('btn-discard-bag').style.display = '';
-    el('btn-check-topics').disabled     = true;
-    setEl('rosbag-status-line', `● Recording → ${res.bag_path}`);
-    el('rosbag-status-line').style.color = 'var(--green)';
-    // Reset HUD and report divs
-    const rep = el('rosbag-report');
-    if (rep) rep.style.display = 'none';
-    const hud = el('rosbag-hud');
-    if (hud) hud.style.display = 'none';
+    app._showRosbagPhase('recording');
+    setEl('rosbag-rec-label', '● Recording 00:00');
+    el('rosbag-rec-label').style.color = 'var(--green)';
+    setEl('rosbag-rec-path', res.bag_path || '');
+    app._rosbagElapsed = 0;
     app._startRosbagTimer();
-    app._startStatsPoll();
+    app._startPhasePoll();
   },
 
   async stopRosbag() {
-    const res = await post('/api/rosbag/stop');
-    app._stopStatsPoll();
     app._stopRosbagTimer();
+    app._stopPhasePoll();
+    const res = await post('/api/rosbag/stop');
     if (res.error) { toast(res.error, 'error'); return; }
-    toast(`Recording saved → ${res.bag_path}`, 'success');
-    app._rosbagIdleUI(`Saved → ${res.bag_path}`);
-    // Hide HUD after stop
-    const hud = el('rosbag-hud');
-    if (hud) hud.style.display = 'none';
+    app._showRosbagPhase('processing');
+    setEl('rosbag-proc-path', res.bag_path || '');
+    app._startPhasePoll();
+  },
+
+  async saveRosbag() {
+    const res = await post('/api/rosbag/save');
+    app._stopPhasePoll();
+    toast(`Bag saved → ${res.bag_path}`, 'success');
+    app._showRosbagPhase('idle');
   },
 
   async discardRosbag() {
-    if (!confirm('Discard this recording? The bag file will be permanently deleted.')) return;
-    const res = await post('/api/rosbag/discard');
-    app._stopStatsPoll();
+    if (!confirm('Permanently delete this recording?')) return;
+    app._stopPhasePoll();
     app._stopRosbagTimer();
+    const res = await post('/api/rosbag/discard');
     if (res.error) { toast(res.error, 'error'); return; }
-    // Hide HUD after discard
-    const hud = el('rosbag-hud');
-    if (hud) hud.style.display = 'none';
-    if (res.deleted) {
-      toast('Recording discarded and deleted.', 'info');
-      app._rosbagIdleUI('Recording discarded.');
-    } else {
-      toast(`Stopped but could not delete: ${res.bag_path}`, 'error');
-      app._rosbagIdleUI(`Stopped (delete failed) → ${res.bag_path}`);
-    }
+    toast('Recording deleted.', 'info');
+    app._showRosbagPhase('idle');
   },
 
-  _rosbagIdleUI(statusText) {
-    el('btn-stop-bag').style.display    = 'none';
-    el('btn-discard-bag').style.display = 'none';
-    el('btn-start-bag').style.display   = '';
-    el('btn-check-topics').disabled     = false;
-    setEl('rosbag-status-line', statusText);
-    el('rosbag-status-line').style.color = 'var(--text-dim)';
+  _showRosbagPhase(phase) {
+    ['idle','recording','processing','done'].forEach(p => {
+      const div = el(`rosbag-phase-${p}`);
+      if (div) div.style.display = p === phase ? '' : 'none';
+    });
   },
 
   _rosbagTimerHandle: null,
-  _rosbagElapsed: 0,
+  _rosbagElapsed:     0,
+  _rosbagPhaseHandle: null,
 
   _startRosbagTimer() {
-    app._rosbagElapsed = 0;
+    app._stopRosbagTimer();
     app._rosbagTimerHandle = setInterval(() => {
       app._rosbagElapsed++;
       const m = String(Math.floor(app._rosbagElapsed / 60)).padStart(2, '0');
       const s = String(app._rosbagElapsed % 60).padStart(2, '0');
-      const path = el('rosbag-dir')?.value?.trim() || '';
-      setEl('rosbag-status-line', `● Recording ${m}:${s} → ${path}`);
+      const lbl = el('rosbag-rec-label');
+      if (lbl) lbl.textContent = `● Recording ${m}:${s}`;
     }, 1000);
   },
 
   _stopRosbagTimer() {
-    if (app._rosbagTimerHandle) {
-      clearInterval(app._rosbagTimerHandle);
-      app._rosbagTimerHandle = null;
-    }
+    if (app._rosbagTimerHandle) { clearInterval(app._rosbagTimerHandle); app._rosbagTimerHandle = null; }
   },
 
-  _startStatsPoll() {
-    app._stopStatsPoll();
-    _rosbagPollHandle = setInterval(() => app._pollBagStats(), 200);
+  _startPhasePoll() {
+    app._stopPhasePoll();
+    app._rosbagPhaseHandle = setInterval(() => app._pollPhase(), 800);
   },
 
-  _stopStatsPoll() {
-    if (_rosbagPollHandle) { clearInterval(_rosbagPollHandle); _rosbagPollHandle = null; }
+  _stopPhasePoll() {
+    if (app._rosbagPhaseHandle) { clearInterval(app._rosbagPhaseHandle); app._rosbagPhaseHandle = null; }
   },
 
-  async _pollBagStats() {
-    const s = await get('/api/rosbag/stats');
-    if (!s || s.state === undefined) return;
-    state.bagStats = s;
-    app._renderBagHUD(s);
-    // If recording stopped externally (process exited and wrote final report)
-    if (!s.recording && s.quality_report) {
-      app._stopStatsPoll();
+  async _pollPhase() {
+    const s = await get('/api/rosbag/status');
+    if (!s || !s.phase) return;
+
+    if (s.phase === 'done' && s.report) {
+      app._stopPhasePoll();
       app._stopRosbagTimer();
-      app._rosbagIdleUI('');
-      const hud = el('rosbag-hud');
-      if (hud) hud.style.display = 'none';
-      app._renderBagReport(s.quality_report);
+      app._showRosbagPhase('done');
+      app._renderBagReport(s.report);
+    } else if (s.phase === 'recording' && s.elapsed_s !== null) {
+      // Sync elapsed if page was reloaded mid-recording
+      app._rosbagElapsed = s.elapsed_s;
     }
-  },
-
-  _renderBagHUD(s) {
-    const hud = el('rosbag-hud');
-    if (!hud) return;
-    if (!s.recording) { hud.style.display = 'none'; return; }
-    hud.style.display = 'block';
-
-    // State line
-    const stateEl = el('rosbag-hud-state');
-    if (stateEl) {
-      const kept  = s.frames_kept    || 0;
-      const skip  = s.frames_skipped || 0;
-      const total = kept + skip;
-      const skipPct = total > 0 ? (skip / total * 100).toFixed(0) : 0;
-      const filt    = (s.filtered_duration_s || 0).toFixed(1);
-      const elapsed = app._fmtTime(s.elapsed_s || 0);
-      let icon, label, cls;
-      if (s.state === 'paused') {
-        icon = '◌'; label = 'SKIP'; cls = 'hud-paused';
-      } else if (s.state === 'cable_inertia') {
-        icon = '◉'; label = 'REC'; cls = 'hud-cable';
-      } else {
-        icon = '●'; label = 'REC'; cls = 'hud-recording';
-      }
-      stateEl.className   = `rosbag-hud-state ${cls}`;
-      stateEl.textContent = `${icon} ${label}  │  ${elapsed}  │  Motion: ${kept} frames  │  Skipped: ${skip} (${skipPct}%)  │  Filtered: ${filt}s`;
-    }
-
-    // ARM/VISION bars
-    const armBar    = el('rosbag-bar-arm');
-    const visionBar = el('rosbag-bar-vision');
-    if (armBar) {
-      armBar.textContent = s.arm_moving ? '████' : '░░░░';
-      armBar.className   = `rosbag-sensor-bar ${s.arm_moving ? 'bar-on' : 'bar-off'}`;
-    }
-    if (visionBar) {
-      visionBar.textContent = s.vision_moving ? '████' : '░░░░';
-      visionBar.className   = `rosbag-sensor-bar ${s.vision_moving ? 'bar-on' : 'bar-off'}`;
-    }
-
-    // Quality bar (10 chars)
-    const q      = s.quality_pct || 0;
-    const filled = Math.max(0, Math.min(10, Math.round(q / 10)));
-    const qBar   = el('rosbag-quality-bar');
-    const qPct   = el('rosbag-quality-pct');
-    if (qBar) {
-      qBar.textContent = '█'.repeat(filled) + '░'.repeat(10 - filled);
-      qBar.className   = `rosbag-quality-track ${q >= 80 ? 'q-good' : q >= 70 ? 'q-warn' : 'q-bad'}`;
-    }
-    if (qPct) {
-      qPct.textContent = `${q.toFixed(0)}%`;
-      qPct.style.color = q >= 80 ? 'var(--green)' : q >= 70 ? 'var(--amber)' : 'var(--red)';
-    }
-
-    // Warning
-    const warn = el('rosbag-quality-warn');
-    if (warn) warn.style.display = q < 70 ? '' : 'none';
   },
 
   _renderBagReport(report) {
-    const el_r = el('rosbag-report');
-    if (!el_r || !report) return;
+    const box = el('rosbag-report-box');
+    if (!box || !report) return;
+    if (report.error) {
+      box.innerHTML = `<div class="rosbag-report-box report-fail">
+        <div class="report-title">Analysis Error</div>
+        <div class="report-verdict report-fail">${report.error}</div>
+      </div>`;
+      return;
+    }
     const ok      = report.pass;
     const cls     = ok ? 'report-pass' : 'report-fail';
     const verdict = ok
       ? '✓  KEEP — clean demo'
-      : '✗  DISCARD — below 80% motion threshold\n     This bag will NOT produce a working policy.\n     DELETE IT and re-record.';
-    el_r.style.display = '';
-    el_r.innerHTML = `
+      : '✗  DISCARD — below 80% motion threshold<br>This bag will NOT produce a working policy.<br>DELETE IT and re-record.';
+    const depthNote = report.has_depth ? '' :
+      '<div class="report-row" style="color:var(--amber)"><span>⚠ No depth data</span><span>arm-only analysis</span></div>';
+    box.innerHTML = `
       <div class="rosbag-report-box ${cls}">
         <div class="report-title">BAG QUALITY REPORT</div>
         <div class="report-row"><span>Raw duration</span><span>${(report.raw_duration_s||0).toFixed(1)}s</span></div>
         <div class="report-row"><span>Filtered duration</span><span>${(report.filtered_duration_s||0).toFixed(1)}s</span></div>
-        <div class="report-row"><span>Frames recorded</span><span>${report.frames_kept||0}</span></div>
+        <div class="report-row"><span>Frames kept</span><span>${report.frames_kept||0}</span></div>
         <div class="report-row"><span>Frames skipped</span><span>${report.frames_skipped||0}</span></div>
-        <div class="report-row"><span>Motion</span><span>${(report.quality_pct||0).toFixed(1)}%</span></div>
-        <div class="report-verdict ${cls}">${verdict.replace(/\n/g,'<br>')}</div>
+        <div class="report-row"><span>Motion quality</span><span>${(report.quality_pct||0).toFixed(1)}%  (target ≥80%)</span></div>
+        ${depthNote}
+        <div class="report-verdict ${cls}">${verdict}</div>
       </div>`;
-  },
-
-  _fmtTime(s) {
-    const m  = Math.floor(s / 60);
-    const ss = (s - m * 60).toFixed(1).padStart(4, '0');
-    return `${String(m).padStart(2,'0')}:${ss}`;
   },
 
   async fetchSettings() {
@@ -864,7 +794,7 @@ function toast(msg, type = 'info', durationMs = 4000) {
 
 // ── Keyboard capture ──────────────────────────────────────────────────────────
 const _kbHeld = new Set();
-let _rosbagPollHandle = null;
+// (rosbag phase polling is tracked via app._rosbagPhaseHandle)
 
 document.addEventListener('keydown', e => {
   if (state.mode !== 'keyboard' || state.systemState !== 'keyboard_teleop') return;
@@ -915,17 +845,23 @@ document.addEventListener('keyup', e => {
   if (chkL) chkL.checked = state.gripperOverrideLeft;
   if (chkR) chkR.checked = state.gripperOverrideRight;
 
-  // Sync rosbag state (in case server was already recording before page load)
+  // Sync rosbag state on page load
   const bagStatus = await get('/api/rosbag/status');
-  if (bagStatus.recording) {
-    el('btn-start-bag').style.display   = 'none';
-    el('btn-stop-bag').style.display    = '';
-    el('btn-discard-bag').style.display = '';
-    el('btn-check-topics').disabled     = true;
-    setEl('rosbag-status-line', `● Recording → ${bagStatus.bag_path || ''}`);
-    el('rosbag-status-line').style.color = 'var(--green)';
+  if (bagStatus.phase === 'recording') {
+    app._showRosbagPhase('recording');
+    app._rosbagElapsed = bagStatus.elapsed_s || 0;
+    setEl('rosbag-rec-path', bagStatus.bag_path || '');
     app._startRosbagTimer();
-    if (bagStatus.elapsed_s) app._rosbagElapsed = bagStatus.elapsed_s;
+    app._startPhasePoll();
+  } else if (bagStatus.phase === 'processing') {
+    app._showRosbagPhase('processing');
+    setEl('rosbag-proc-path', bagStatus.bag_path || '');
+    app._startPhasePoll();
+  } else if (bagStatus.phase === 'done' && bagStatus.report) {
+    app._showRosbagPhase('done');
+    app._renderBagReport(bagStatus.report);
+  } else {
+    app._showRosbagPhase('idle');
   }
 
   // Polling fallback: keeps the display fresh even when WS hiccups.
