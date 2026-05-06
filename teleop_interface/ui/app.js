@@ -564,7 +564,6 @@ const app = {
         : `${missing.length} topic(s) not publishing.`;
       idleStatus.style.color = allOk ? 'var(--green)' : 'var(--amber)';
     }
-    el('btn-start-bag').disabled = false;
   },
 
   async startRosbag() {
