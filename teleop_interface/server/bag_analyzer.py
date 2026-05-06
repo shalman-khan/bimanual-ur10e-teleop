@@ -123,6 +123,8 @@ def _filter_with_depth(joint_msgs, depth_msgs):
     depth_msgs = sorted(depth_msgs, key=lambda x: x[0])
 
     kept = skipped = 0
+    # Compare each frame against the IMMEDIATELY PREVIOUS frame so that
+    # slow continuous motion (e.g. keyboard TCP teleop) is always detected.
     prev_joints = prev_depth = None
     j_idx = 0
 
@@ -138,9 +140,11 @@ def _filter_with_depth(joint_msgs, depth_msgs):
         if skip:
             skipped += 1
         else:
-            kept       += 1
-            prev_joints = curr_joints
-            prev_depth  = depth_arr
+            kept += 1
+
+        # Always advance reference to current frame regardless of keep/skip
+        prev_joints = curr_joints
+        prev_depth  = depth_arr
 
     return kept, skipped
 
@@ -153,7 +157,7 @@ def _filter_arm_only(joint_msgs):
             kept += 1
         else:
             skipped += 1
-        prev = joints
+        prev = joints  # always advance
     return kept, skipped
 
 

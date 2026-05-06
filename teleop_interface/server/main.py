@@ -424,18 +424,43 @@ _rosbag_phase:      str                              = "idle"   # idle|recording
 _rosbag_report:     Optional[Dict[str, Any]]         = None
 
 
-def _check_topic_publishers(topic: str) -> int:
+def _check_topic_publishers(topic: str) -> dict:
+    """
+    Check a topic for both publisher count and live data.
+    Returns {"publishers": int, "publishing": bool}.
+    - publishers: number of nodes advertising the topic (-1 on error)
+    - publishing: True if at least one message was received within 2 seconds
+    """
+    publishers = -1
+    publishing = False
+    env = os.environ.copy()
+
+    # Step 1: publisher count (fast)
     try:
-        result = subprocess.run(
+        r = subprocess.run(
             ["bash", "-c", f"{_ROS_SETUP}ros2 topic info {shlex.quote(topic)}"],
-            capture_output=True, text=True, timeout=6, env=os.environ.copy(),
+            capture_output=True, text=True, timeout=6, env=env,
         )
-        for line in result.stdout.splitlines():
+        for line in r.stdout.splitlines():
             if "Publisher count:" in line:
-                return int(line.split(":")[-1].strip())
+                publishers = int(line.split(":")[-1].strip())
+                break
     except Exception:
         pass
-    return -1
+
+    # Step 2: verify data is flowing (2-second window)
+    if publishers > 0:
+        try:
+            r = subprocess.run(
+                ["bash", "-c",
+                 f"{_ROS_SETUP}timeout 2 ros2 topic echo --once {shlex.quote(topic)}"],
+                capture_output=True, text=True, timeout=5, env=env,
+            )
+            publishing = r.returncode == 0 and bool(r.stdout.strip())
+        except Exception:
+            pass
+
+    return {"publishers": publishers, "publishing": publishing}
 
 
 @app.get("/api/rosbag/status")
@@ -453,8 +478,8 @@ async def api_rosbag_status():
 
 @app.post("/api/rosbag/check_topics")
 async def api_rosbag_check_topics():
-    loop    = asyncio.get_event_loop()
-    results: Dict[str, int] = {}
+    loop    = asyncio.get_running_loop()
+    results: Dict[str, dict] = {}
     tasks   = {t: loop.run_in_executor(None, _check_topic_publishers, t) for t in RECORD_TOPICS}
     for topic, fut in tasks.items():
         results[topic] = await fut

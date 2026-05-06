@@ -542,26 +542,31 @@ const app = {
     if (res.error) { toast(res.error, 'error'); return; }
 
     const topics = res.topics || {};
-    const allOk  = Object.values(topics).every(v => v > 0);
     const list   = el('rosbag-topic-list');
     list.style.display = 'flex';
-    list.innerHTML = Object.entries(topics).map(([topic, count]) => {
-      const ok   = count > 0;
-      const cls  = ok ? 'rosbag-topic-ok' : 'rosbag-topic-err';
-      const icon = ok ? '✓' : '✗';
-      const note = ok ? `${count} pub` : 'no publishers';
+    list.innerHTML = Object.entries(topics).map(([topic, info]) => {
+      const pubs       = info.publishers ?? info;   // back-compat
+      const publishing = info.publishing ?? (pubs > 0);
+      const hasPub     = pubs > 0;
+      // 3 states: publishing (green), pub exists but idle (amber), no pub (red)
+      const cls  = publishing ? 'rosbag-topic-ok' : hasPub ? 'rosbag-topic-warn' : 'rosbag-topic-err';
+      const icon = publishing ? '✓' : hasPub ? '◌' : '✗';
+      const note = publishing ? 'publishing'
+                 : hasPub    ? `${pubs} pub — no data`
+                 :              'no publishers';
       return `<div class="rosbag-topic-row ${cls}">
         <span>${icon}</span>
         <span class="rosbag-topic-name">${topic}</span>
-        <span style="color:var(--text-dim);margin-left:auto">${note}</span>
+        <span style="margin-left:auto;font-size:11px">${note}</span>
       </div>`;
     }).join('');
 
-    const missing = Object.entries(topics).filter(([,v]) => v <= 0).map(([t]) => t);
+    const notPublishing = Object.entries(topics).filter(([, info]) => !info.publishing).map(([t]) => t);
+    const allOk = notPublishing.length === 0;
     if (idleStatus) {
       idleStatus.textContent = allOk
         ? 'All topics publishing — ready to record.'
-        : `${missing.length} topic(s) not publishing.`;
+        : `${notPublishing.length} topic(s) not sending data.`;
       idleStatus.style.color = allOk ? 'var(--green)' : 'var(--amber)';
     }
   },
