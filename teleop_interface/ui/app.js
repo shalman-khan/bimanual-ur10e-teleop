@@ -47,6 +47,7 @@ const state = {
   settings:             null,
   gripperOverrideLeft:  false,
   gripperOverrideRight: false,
+  bagStats:             null,
 };
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -574,22 +575,36 @@ const app = {
     el('btn-check-topics').disabled     = true;
     setEl('rosbag-status-line', `● Recording → ${res.bag_path}`);
     el('rosbag-status-line').style.color = 'var(--green)';
+    // Reset HUD and report divs
+    const rep = el('rosbag-report');
+    if (rep) rep.style.display = 'none';
+    const hud = el('rosbag-hud');
+    if (hud) hud.style.display = 'none';
     app._startRosbagTimer();
+    app._startStatsPoll();
   },
 
   async stopRosbag() {
     const res = await post('/api/rosbag/stop');
+    app._stopStatsPoll();
     app._stopRosbagTimer();
     if (res.error) { toast(res.error, 'error'); return; }
     toast(`Recording saved → ${res.bag_path}`, 'success');
     app._rosbagIdleUI(`Saved → ${res.bag_path}`);
+    // Hide HUD after stop
+    const hud = el('rosbag-hud');
+    if (hud) hud.style.display = 'none';
   },
 
   async discardRosbag() {
     if (!confirm('Discard this recording? The bag file will be permanently deleted.')) return;
     const res = await post('/api/rosbag/discard');
+    app._stopStatsPoll();
     app._stopRosbagTimer();
     if (res.error) { toast(res.error, 'error'); return; }
+    // Hide HUD after discard
+    const hud = el('rosbag-hud');
+    if (hud) hud.style.display = 'none';
     if (res.deleted) {
       toast('Recording discarded and deleted.', 'info');
       app._rosbagIdleUI('Recording discarded.');
@@ -627,6 +642,116 @@ const app = {
       clearInterval(app._rosbagTimerHandle);
       app._rosbagTimerHandle = null;
     }
+  },
+
+  _startStatsPoll() {
+    app._stopStatsPoll();
+    _rosbagPollHandle = setInterval(() => app._pollBagStats(), 200);
+  },
+
+  _stopStatsPoll() {
+    if (_rosbagPollHandle) { clearInterval(_rosbagPollHandle); _rosbagPollHandle = null; }
+  },
+
+  async _pollBagStats() {
+    const s = await get('/api/rosbag/stats');
+    if (!s || s.state === undefined) return;
+    state.bagStats = s;
+    app._renderBagHUD(s);
+    // If recording stopped externally (process exited and wrote final report)
+    if (!s.recording && s.quality_report) {
+      app._stopStatsPoll();
+      app._stopRosbagTimer();
+      app._rosbagIdleUI('');
+      const hud = el('rosbag-hud');
+      if (hud) hud.style.display = 'none';
+      app._renderBagReport(s.quality_report);
+    }
+  },
+
+  _renderBagHUD(s) {
+    const hud = el('rosbag-hud');
+    if (!hud) return;
+    if (!s.recording) { hud.style.display = 'none'; return; }
+    hud.style.display = 'block';
+
+    // State line
+    const stateEl = el('rosbag-hud-state');
+    if (stateEl) {
+      const kept  = s.frames_kept    || 0;
+      const skip  = s.frames_skipped || 0;
+      const total = kept + skip;
+      const skipPct = total > 0 ? (skip / total * 100).toFixed(0) : 0;
+      const filt    = (s.filtered_duration_s || 0).toFixed(1);
+      const elapsed = app._fmtTime(s.elapsed_s || 0);
+      let icon, label, cls;
+      if (s.state === 'paused') {
+        icon = '◌'; label = 'SKIP'; cls = 'hud-paused';
+      } else if (s.state === 'cable_inertia') {
+        icon = '◉'; label = 'REC'; cls = 'hud-cable';
+      } else {
+        icon = '●'; label = 'REC'; cls = 'hud-recording';
+      }
+      stateEl.className   = `rosbag-hud-state ${cls}`;
+      stateEl.textContent = `${icon} ${label}  │  ${elapsed}  │  Motion: ${kept} frames  │  Skipped: ${skip} (${skipPct}%)  │  Filtered: ${filt}s`;
+    }
+
+    // ARM/VISION bars
+    const armBar    = el('rosbag-bar-arm');
+    const visionBar = el('rosbag-bar-vision');
+    if (armBar) {
+      armBar.textContent = s.arm_moving ? '████' : '░░░░';
+      armBar.className   = `rosbag-sensor-bar ${s.arm_moving ? 'bar-on' : 'bar-off'}`;
+    }
+    if (visionBar) {
+      visionBar.textContent = s.vision_moving ? '████' : '░░░░';
+      visionBar.className   = `rosbag-sensor-bar ${s.vision_moving ? 'bar-on' : 'bar-off'}`;
+    }
+
+    // Quality bar (10 chars)
+    const q      = s.quality_pct || 0;
+    const filled = Math.max(0, Math.min(10, Math.round(q / 10)));
+    const qBar   = el('rosbag-quality-bar');
+    const qPct   = el('rosbag-quality-pct');
+    if (qBar) {
+      qBar.textContent = '█'.repeat(filled) + '░'.repeat(10 - filled);
+      qBar.className   = `rosbag-quality-track ${q >= 80 ? 'q-good' : q >= 70 ? 'q-warn' : 'q-bad'}`;
+    }
+    if (qPct) {
+      qPct.textContent = `${q.toFixed(0)}%`;
+      qPct.style.color = q >= 80 ? 'var(--green)' : q >= 70 ? 'var(--amber)' : 'var(--red)';
+    }
+
+    // Warning
+    const warn = el('rosbag-quality-warn');
+    if (warn) warn.style.display = q < 70 ? '' : 'none';
+  },
+
+  _renderBagReport(report) {
+    const el_r = el('rosbag-report');
+    if (!el_r || !report) return;
+    const ok      = report.pass;
+    const cls     = ok ? 'report-pass' : 'report-fail';
+    const verdict = ok
+      ? '✓  KEEP — clean demo'
+      : '✗  DISCARD — below 80% motion threshold\n     This bag will NOT produce a working policy.\n     DELETE IT and re-record.';
+    el_r.style.display = '';
+    el_r.innerHTML = `
+      <div class="rosbag-report-box ${cls}">
+        <div class="report-title">BAG QUALITY REPORT</div>
+        <div class="report-row"><span>Raw duration</span><span>${(report.raw_duration_s||0).toFixed(1)}s</span></div>
+        <div class="report-row"><span>Filtered duration</span><span>${(report.filtered_duration_s||0).toFixed(1)}s</span></div>
+        <div class="report-row"><span>Frames recorded</span><span>${report.frames_kept||0}</span></div>
+        <div class="report-row"><span>Frames skipped</span><span>${report.frames_skipped||0}</span></div>
+        <div class="report-row"><span>Motion</span><span>${(report.quality_pct||0).toFixed(1)}%</span></div>
+        <div class="report-verdict ${cls}">${verdict.replace(/\n/g,'<br>')}</div>
+      </div>`;
+  },
+
+  _fmtTime(s) {
+    const m  = Math.floor(s / 60);
+    const ss = (s - m * 60).toFixed(1).padStart(4, '0');
+    return `${String(m).padStart(2,'0')}:${ss}`;
   },
 
   async fetchSettings() {
@@ -736,6 +861,7 @@ function toast(msg, type = 'info', durationMs = 4000) {
 
 // ── Keyboard capture ──────────────────────────────────────────────────────────
 const _kbHeld = new Set();
+let _rosbagPollHandle = null;
 
 document.addEventListener('keydown', e => {
   if (state.mode !== 'keyboard' || state.systemState !== 'keyboard_teleop') return;

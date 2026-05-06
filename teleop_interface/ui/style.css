@@ -1000,3 +1000,89 @@ textarea.json-editor:focus { outline: none; border-color: var(--accent); }
 #ws-status { margin-left: auto; }
 #ws-status.connected { color: var(--green); }
 #ws-status.disconnected { color: var(--red); }
+
+/* ── Rosbag HUD ──────────────────────────────────────────────────────────── */
+.rosbag-hud-state {
+  font-size: 12px;
+  font-family: monospace;
+  padding: 6px 0 4px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.hud-recording { color: var(--green); }
+.hud-cable     { color: var(--amber); }
+.hud-paused    { color: var(--text-dim); }
+
+.rosbag-hud-bars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: monospace;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.rosbag-bar-label { font-size: 11px; color: var(--text-dim); }
+.rosbag-sensor-bar { font-size: 14px; letter-spacing: -1px; }
+.bar-on  { color: var(--green); }
+.bar-off { color: var(--text-dim); opacity: 0.4; }
+
+.rosbag-hud-quality {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 2px;
+  font-family: monospace;
+}
+.rosbag-quality-track {
+  font-size: 14px;
+  letter-spacing: -1px;
+}
+.q-good { color: var(--green); }
+.q-warn { color: var(--amber); }
+.q-bad  { color: var(--red); }
+
+.rosbag-quality-warn {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--red);
+  animation: pulse 0.8s infinite;
+}
+
+/* ── Rosbag Quality Report ───────────────────────────────────────────────── */
+.rosbag-report { margin-top: 8px; }
+
+.rosbag-report-box {
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.report-pass { background: var(--green-dim); border: 1px solid #166534; }
+.report-fail { background: var(--red-dim);   border: 1px solid #991b1b; }
+
+.report-title {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.report-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text);
+  padding: 1px 0;
+}
+
+.report-verdict {
+  margin-top: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.report-pass .report-verdict { color: var(--green); }
+.report-fail .report-verdict { color: var(--red); }

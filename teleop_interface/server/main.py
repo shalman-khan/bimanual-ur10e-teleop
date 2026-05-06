@@ -10,6 +10,7 @@ Serves:
 
 import asyncio
 import datetime
+import json
 import logging
 import os
 import shlex
@@ -399,11 +400,14 @@ RECORD_TOPICS = [
     "/robot2/joint_states",
     "/gripper1/joint_states",
     "/gripper2/joint_states",
-    "/zed/zed_node/depth/depth_registered",
-    "/zed/zed_node/rgb/color/rect/image",
     "/robot1/wrench",
     "/robot2/wrench",
+    "/zed/zed_node/depth/depth_registered",
+    "/zed/zed_node/depth/camera_info",
+    "/zed/zed_node/rgb/color/rect/image",
 ]
+
+STATS_FILE = "/tmp/smart_recorder_stats.json"
 
 _ROS_SETUP = (
     "source /opt/ros/humble/setup.bash && "
@@ -474,10 +478,10 @@ async def api_rosbag_start(req: RosbagStartRequest):
 
     ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     bag_path = f"{bag_dir}/session_{ts}"
-    topics   = " ".join(RECORD_TOPICS)
 
-    env = os.environ.copy()
-    cmd = f"{_ROS_SETUP}ros2 bag record -o {shlex.quote(bag_path)} {topics}"
+    script = "/workspace/teleop_interface/server/smart_recorder.py"
+    env    = os.environ.copy()
+    cmd    = f"{_ROS_SETUP}python3 {script} {shlex.quote(bag_path)}"
 
     try:
         _rosbag_proc       = subprocess.Popen(["bash", "-c", cmd], env=env)
@@ -486,6 +490,15 @@ async def api_rosbag_start(req: RosbagStartRequest):
         return {"status": "started", "bag_path": bag_path}
     except Exception as exc:
         return {"error": str(exc)}
+
+
+@app.get("/api/rosbag/stats")
+async def api_rosbag_stats():
+    try:
+        with open(STATS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {"recording": False, "state": "idle"}
 
 
 def _kill_rosbag_proc() -> Optional[str]:
