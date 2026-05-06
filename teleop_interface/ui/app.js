@@ -509,6 +509,92 @@ const app = {
     post('/api/keyboard_teleop/speed', { linear: lin, rotation: rot });
   },
 
+  async checkTopics() {
+    const btn = el('btn-check-topics');
+    btn.disabled = true;
+    btn.textContent = '⏳ Checking…';
+    setEl('rosbag-status-line', 'Checking topics — please wait…');
+    el('rosbag-topic-list').style.display = 'none';
+
+    const res = await post('/api/rosbag/check_topics');
+    btn.disabled = false;
+    btn.textContent = '🔍 Check Topics';
+
+    if (res.error) { toast(res.error, 'error'); return; }
+
+    const topics = res.topics || {};
+    const allOk  = Object.values(topics).every(v => v > 0);
+    const list   = el('rosbag-topic-list');
+    list.style.display = 'flex';
+    list.innerHTML = Object.entries(topics).map(([topic, count]) => {
+      const ok    = count > 0;
+      const cls   = ok ? 'rosbag-topic-ok' : 'rosbag-topic-err';
+      const icon  = ok ? '✓' : '✗';
+      const note  = ok ? `${count} pub` : 'no publishers';
+      return `<div class="rosbag-topic-row ${cls}">
+        <span>${icon}</span>
+        <span class="rosbag-topic-name">${topic}</span>
+        <span style="color:var(--text-dim);margin-left:auto">${note}</span>
+      </div>`;
+    }).join('');
+
+    const missing = Object.entries(topics).filter(([,v]) => v <= 0).map(([t]) => t);
+    if (allOk) {
+      setEl('rosbag-status-line', 'All topics publishing — ready to record.');
+      el('rosbag-status-line').style.color = 'var(--green)';
+    } else {
+      setEl('rosbag-status-line', `${missing.length} topic(s) not publishing.`);
+      el('rosbag-status-line').style.color = 'var(--amber)';
+    }
+    el('btn-start-bag').disabled = false;
+  },
+
+  async startRosbag() {
+    const bagDir = el('rosbag-dir')?.value?.trim() || '/workspace/bags';
+    const res = await post('/api/rosbag/start', { bag_dir: bagDir });
+    if (res.error) { toast(res.error, 'error'); return; }
+    toast(`Recording started → ${res.bag_path}`, 'success');
+    el('btn-start-bag').style.display = 'none';
+    el('btn-stop-bag').style.display  = '';
+    el('btn-check-topics').disabled   = true;
+    setEl('rosbag-status-line', `● Recording → ${res.bag_path}`);
+    el('rosbag-status-line').style.color = 'var(--green)';
+    app._startRosbagTimer();
+  },
+
+  async stopRosbag() {
+    const res = await post('/api/rosbag/stop');
+    app._stopRosbagTimer();
+    if (res.error) { toast(res.error, 'error'); return; }
+    toast(`Recording saved → ${res.bag_path}`, 'info');
+    el('btn-stop-bag').style.display  = 'none';
+    el('btn-start-bag').style.display = '';
+    el('btn-check-topics').disabled   = false;
+    setEl('rosbag-status-line', `Saved → ${res.bag_path}`);
+    el('rosbag-status-line').style.color = 'var(--text-dim)';
+  },
+
+  _rosbagTimerHandle: null,
+  _rosbagElapsed: 0,
+
+  _startRosbagTimer() {
+    app._rosbagElapsed = 0;
+    app._rosbagTimerHandle = setInterval(() => {
+      app._rosbagElapsed++;
+      const m = String(Math.floor(app._rosbagElapsed / 60)).padStart(2, '0');
+      const s = String(app._rosbagElapsed % 60).padStart(2, '0');
+      const path = el('rosbag-dir')?.value?.trim() || '';
+      setEl('rosbag-status-line', `● Recording ${m}:${s} → ${path}`);
+    }, 1000);
+  },
+
+  _stopRosbagTimer() {
+    if (app._rosbagTimerHandle) {
+      clearInterval(app._rosbagTimerHandle);
+      app._rosbagTimerHandle = null;
+    }
+  },
+
   async fetchSettings() {
     const s = await get('/api/settings');
     state.settings = s;
@@ -656,6 +742,18 @@ document.addEventListener('keyup', e => {
   if (status.right_joints) state.rightJoints = status.right_joints;
 
   renderUI();
+
+  // Sync rosbag state (in case server was already recording before page load)
+  const bagStatus = await get('/api/rosbag/status');
+  if (bagStatus.recording) {
+    el('btn-start-bag').style.display = 'none';
+    el('btn-stop-bag').style.display  = '';
+    el('btn-check-topics').disabled   = true;
+    setEl('rosbag-status-line', `● Recording → ${bagStatus.bag_path || ''}`);
+    el('rosbag-status-line').style.color = 'var(--green)';
+    app._startRosbagTimer();
+    if (bagStatus.elapsed_s) app._rosbagElapsed = bagStatus.elapsed_s;
+  }
 
   // Polling fallback: keeps the display fresh even when WS hiccups.
   // The WS is the primary real-time path; this fills any gaps.

@@ -311,11 +311,64 @@ main {
 /* ── Top Row (Connection + Teleop) ─────────────────────────────────────── */
 .top-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 16px;
 }
 
-@media (max-width: 700px) { .top-row { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .top-row { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px)  { .top-row { grid-template-columns: 1fr; } }
+
+/* ── Rosbag Card ─────────────────────────────────────────────────────────── */
+.rosbag-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rosbag-folder-row label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.rosbag-folder-row input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.rosbag-btn-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rosbag-topic-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rosbag-topic-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.rosbag-topic-ok   { color: var(--green); }
+.rosbag-topic-warn { color: var(--amber); }
+.rosbag-topic-err  { color: var(--red); }
+.rosbag-topic-name { color: var(--text-dim); }
+.rosbag-topic-ok   .rosbag-topic-name { color: var(--text); }
 
 .conn-button-grid {
   display: flex;

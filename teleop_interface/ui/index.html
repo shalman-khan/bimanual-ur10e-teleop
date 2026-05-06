@@ -71,6 +71,32 @@
       </div>
     </div>
 
+    <!-- Rosbag Recording Card -->
+    <div class="card">
+      <div class="card-title">&#9899; Rosbag Recording</div>
+
+      <div class="rosbag-folder-row">
+        <label for="rosbag-dir">Save to</label>
+        <input type="text" id="rosbag-dir" value="/workspace/bags" placeholder="/workspace/bags" />
+      </div>
+
+      <div class="rosbag-btn-row">
+        <button class="btn-secondary btn-sm" id="btn-check-topics" onclick="app.checkTopics()">
+          &#128270; Check Topics
+        </button>
+        <button class="btn-primary btn-sm"   id="btn-start-bag"   onclick="app.startRosbag()" disabled>
+          &#9210; Start Recording
+        </button>
+        <button class="btn-danger  btn-sm"   id="btn-stop-bag"    onclick="app.stopRosbag()"  style="display:none">
+          &#9209; Stop
+        </button>
+      </div>
+
+      <div id="rosbag-status-line" style="font-size:12px;color:var(--text-dim);margin-top:6px;min-height:16px;"></div>
+
+      <div id="rosbag-topic-list" class="rosbag-topic-list" style="display:none;"></div>
+    </div>
+
   </div><!-- /top-row -->
 
   <!-- ── Row 2: Live Joint Display (always visible) ────────────────────── -->

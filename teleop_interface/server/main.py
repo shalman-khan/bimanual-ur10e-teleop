@@ -9,8 +9,11 @@ Serves:
 """
 
 import asyncio
+import datetime
 import logging
 import os
+import shlex
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Set
@@ -371,6 +374,120 @@ async def api_get_settings():
 async def api_update_settings(data: Dict[str, Any]):
     settings.update(data)
     return {"status": "saved", "settings": settings.get()}
+
+
+# ── Rosbag Recording ──────────────────────────────────────────────────────────
+RECORD_TOPICS = [
+    "/robot1/joint_states",
+    "/robot2/joint_states",
+    "/gripper1/joint_states",
+    "/gripper2/joint_states",
+    "/zed/zed_node/depth/depth_registered",
+    "/zed/zed_node/rgb/color/rect/image",
+    "/robot1/wrench",
+    "/robot2/wrench",
+]
+
+_ROS_SETUP = (
+    "source /opt/ros/humble/setup.bash && "
+    "source /ros2_ws/install/setup.bash 2>/dev/null; "
+    "source /workspace/install/setup.bash 2>/dev/null; "
+)
+
+_rosbag_proc: Optional[subprocess.Popen] = None
+_rosbag_path: Optional[str] = None
+_rosbag_start_time: Optional[datetime.datetime] = None
+
+
+def _check_topic_publishers(topic: str) -> int:
+    """Return publisher count for a topic, or -1 on error."""
+    try:
+        env = os.environ.copy()
+        result = subprocess.run(
+            ["bash", "-c", f"{_ROS_SETUP}ros2 topic info {shlex.quote(topic)}"],
+            capture_output=True, text=True, timeout=6, env=env,
+        )
+        for line in result.stdout.splitlines():
+            if "Publisher count:" in line:
+                return int(line.split(":")[-1].strip())
+    except Exception:
+        pass
+    return -1
+
+
+@app.get("/api/rosbag/status")
+async def api_rosbag_status():
+    recording = _rosbag_proc is not None and _rosbag_proc.poll() is None
+    elapsed = None
+    if recording and _rosbag_start_time:
+        elapsed = (datetime.datetime.now() - _rosbag_start_time).seconds
+    return {
+        "recording": recording,
+        "bag_path":  _rosbag_path,
+        "elapsed_s": elapsed,
+    }
+
+
+@app.post("/api/rosbag/check_topics")
+async def api_rosbag_check_topics():
+    loop = asyncio.get_event_loop()
+    results: Dict[str, int] = {}
+    tasks = {
+        topic: loop.run_in_executor(None, _check_topic_publishers, topic)
+        for topic in RECORD_TOPICS
+    }
+    for topic, fut in tasks.items():
+        results[topic] = await fut
+    return {"topics": results}
+
+
+class RosbagStartRequest(BaseModel):
+    bag_dir: str = "/workspace/bags"
+
+
+@app.post("/api/rosbag/start")
+async def api_rosbag_start(req: RosbagStartRequest):
+    global _rosbag_proc, _rosbag_path, _rosbag_start_time
+
+    if _rosbag_proc is not None and _rosbag_proc.poll() is None:
+        return {"error": "Already recording"}
+
+    bag_dir = req.bag_dir.rstrip("/") or "/workspace/bags"
+    os.makedirs(bag_dir, exist_ok=True)
+
+    ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    bag_path = f"{bag_dir}/session_{ts}"
+    topics   = " ".join(RECORD_TOPICS)
+
+    env = os.environ.copy()
+    cmd = f"{_ROS_SETUP}ros2 bag record -o {shlex.quote(bag_path)} {topics}"
+
+    try:
+        _rosbag_proc       = subprocess.Popen(["bash", "-c", cmd], env=env)
+        _rosbag_path       = bag_path
+        _rosbag_start_time = datetime.datetime.now()
+        return {"status": "started", "bag_path": bag_path}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.post("/api/rosbag/stop")
+async def api_rosbag_stop():
+    global _rosbag_proc, _rosbag_start_time
+
+    if _rosbag_proc is None or _rosbag_proc.poll() is not None:
+        return {"error": "Not recording"}
+
+    _rosbag_proc.terminate()
+    try:
+        _rosbag_proc.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        _rosbag_proc.kill()
+
+    path               = _rosbag_path
+    _rosbag_proc       = None
+    _rosbag_start_time = None
+    return {"status": "stopped", "bag_path": path}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
