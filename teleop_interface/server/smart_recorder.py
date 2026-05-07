@@ -42,15 +42,34 @@ except ImportError as e:
     sys.exit(1)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-MOTION_THRESHOLD = 0.015   # rad — arm joint delta threshold
+# Slow cable manipulation moves ~0.003 rad/step — threshold must be below that
+MOTION_THRESHOLD = 0.003   # rad — arm joint delta (was 0.015, too high for slow teleop)
 VISION_THRESHOLD = 0.003   # m   — mean depth delta threshold
-MIN_MOTION_PCT   = 80      # %   — quality target
+MIN_MOTION_PCT   = 70      # %   — quality gate (was 80)
 MIN_VALID_PIX    = 5_000   # minimum finite pixels needed for vision check
 FRAME_DT         = 0.05    # s   — nominal period per kept frame (50 ms)
 STATS_FILE       = "/tmp/smart_recorder_stats.json"
 
 DEPTH_TOPIC = '/zed/zed_node/depth/depth_registered'
-ARM_TOPIC   = '/robot2/joint_states'
+ARM_TOPIC   = '/robot2/joint_states'   # only active arm monitored for motion
+
+# Camera topics — ALWAYS written at full native rate, NEVER filtered.
+# DP3 needs point cloud at 28Hz regardless of arm motion.
+CAMERA_TOPICS = {
+    DEPTH_TOPIC,
+    '/zed/zed_node/depth/camera_info',
+    '/zed/zed_node/rgb/color/rect/image',
+}
+
+# Robot state topics — written only when motion detected (filtered).
+ROBOT_TOPICS = {
+    '/robot1/joint_states',
+    '/robot2/joint_states',
+    '/gripper1/joint_states',
+    '/gripper2/joint_states',
+    '/robot1/wrench',
+    '/robot2/wrench',
+}
 
 TOPIC_TYPES = [
     ('/robot1/joint_states',                'sensor_msgs/msg/JointState'),
@@ -143,20 +162,28 @@ def _build_report(frames_kept: int, frames_skipped: int, elapsed_s: float) -> di
 
 # ── Operator tips banner ──────────────────────────────────────────────────────
 def _print_tips(bag_path: str) -> None:
-    bar = '━' * 42
+    bar = '━' * 50
     print(f"""
 {bar}
   RECORDING TIPS — read before starting
 {bar}
-  {_G}✓{_RST}  Plan the full motion BEFORE pressing record
-  {_G}✓{_RST}  Move continuously from start to finish
-  {_G}✓{_RST}  Brief cable adjustment pauses are fine
-  {_R}✗{_RST}  Do NOT stop to think mid-demo
-  {_R}✗{_RST}  Do NOT freeze for more than 1 second
+  {_B}Setup:{_RST}
+  {_G}✓{_RST}  Robot 1 (left)  — stays STATIC, holds cable
+  {_G}✓{_RST}  Robot 2 (right) — YOU control this arm only
 
-  System auto-skips frozen frames.
-  Cable swinging while arm is still = KEPT.
-  Target: > 80% motion (aim for > 85%)
+  {_B}How to teleoperate:{_RST}
+  {_G}✓{_RST}  Plan the full motion BEFORE pressing record
+  {_G}✓{_RST}  Approach cable → grasp → pull → release
+  {_G}✓{_RST}  Move robot 2 smoothly and continuously
+  {_G}✓{_RST}  Cable swinging while arm is still = OK (kept)
+  {_R}✗{_RST}  Do NOT stop mid-task to think or reposition
+  {_R}✗{_RST}  Do NOT freeze robot 2 for more than 0.5s
+
+  {_B}Filter behaviour:{_RST}
+  System monitors robot 2 joints + depth camera.
+  Frames dropped only when BOTH arm AND scene frozen.
+  Camera always recorded at full rate (28 Hz).
+  Target motion: > 70%  (aim for > 85%)
 {bar}
 
   Recording to: {bag_path}
@@ -171,7 +198,7 @@ def _print_report(report: dict) -> None:
         verdict_lines = [f"  {_G}{_B}✓  KEEP — clean demo{_RST}                       "]
     else:
         verdict_lines = [
-            f"  {_R}{_B}✗  DISCARD — below 80% motion threshold{_RST}   ",
+            f"  {_R}{_B}✗  DISCARD — below 70% motion threshold{_RST}   ",
             f"  {_R}   This bag will NOT produce a working{_RST}         ",
             f"  {_R}   policy. DELETE IT and re-record.{_RST}            ",
         ]
@@ -244,9 +271,9 @@ def _print_hud(state: str, elapsed_s: float, frames_kept: int, frames_skipped: i
 
     # Line 3 — quality bar
     filled = max(0, min(10, round(qual_pct / 10)))
-    q_col  = _G if qual_pct >= 80 else (_Y if qual_pct >= 70 else _R)
+    q_col  = _G if qual_pct >= 70 else (_Y if qual_pct >= 55 else _R)
     q_bar  = f"{q_col}{'█' * filled}{'░' * (10 - filled)}{_RST}"
-    line3  = f"  Quality {q_bar}  {q_col}{qual_pct:.0f}%{_RST}  target > 80%"
+    line3  = f"  Quality {q_bar}  {q_col}{qual_pct:.0f}%{_RST}  target > 70%"
 
     # Line 4 (optional warning)
     line4 = None
@@ -387,16 +414,22 @@ class SmartRecorder(Node):
         else:
             self._cur_state = 'paused'
 
+        # Camera topics: ALWAYS write at full native rate (28 Hz).
+        # DP3 needs continuous point cloud regardless of arm motion.
+        # Robot state topics: only write when motion detected.
+        self._write_camera_buffers()
+
         if keep:
-            self._write_buffers()
+            self._write_robot_buffers()
             self._prev_joints = list(self._latest_joints) if self._latest_joints else None
             self._prev_depth  = curr_depth
             self._frames_kept += 1
             self._first_frame  = False
         else:
-            # Discard buffered messages
-            for q in self._buffers.values():
-                q.clear()
+            # Discard only robot state buffers — camera already written above
+            for topic, q in self._buffers.items():
+                if topic in ROBOT_TOPICS:
+                    q.clear()
             self._frames_skipped += 1
 
         # Update stats file
@@ -411,8 +444,32 @@ class SmartRecorder(Node):
             self._arm_moving, self._vision_moving,
         )
 
+    def _write_camera_buffers(self):
+        """Flush camera topic buffers — called every depth frame regardless of motion."""
+        for topic, q in self._buffers.items():
+            if topic in CAMERA_TOPICS:
+                while q:
+                    msg = q.popleft()
+                    ts  = _msg_stamp_ns(msg, self)
+                    try:
+                        self._writer.write(topic, serialize_message(msg), ts)
+                    except Exception as e:
+                        print(f"\n[smart_recorder] Warning: write error for {topic}: {e}", flush=True)
+
+    def _write_robot_buffers(self):
+        """Flush robot state topic buffers — called only when motion detected."""
+        for topic, q in self._buffers.items():
+            if topic in ROBOT_TOPICS:
+                while q:
+                    msg = q.popleft()
+                    ts  = _msg_stamp_ns(msg, self)
+                    try:
+                        self._writer.write(topic, serialize_message(msg), ts)
+                    except Exception as e:
+                        print(f"\n[smart_recorder] Warning: write error for {topic}: {e}", flush=True)
+
     def _write_buffers(self):
-        """Flush all topic buffers to bag."""
+        """Flush all topic buffers (used on final stop)."""
         for topic, q in self._buffers.items():
             while q:
                 msg = q.popleft()

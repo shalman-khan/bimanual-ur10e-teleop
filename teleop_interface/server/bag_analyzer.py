@@ -18,13 +18,13 @@ from typing import Any, Dict, Tuple
 
 import numpy as np
 
-MOTION_THRESHOLD = 0.015   # rad — max joint delta across either arm's 6 joints
+MOTION_THRESHOLD = 0.003   # rad — slow cable manipulation is ~0.003 rad/step (was 0.015)
 VISION_THRESHOLD = 0.003   # m   — mean absolute depth change over valid pixels
-MIN_MOTION_PCT   = 80      # %   — pass threshold
+MIN_MOTION_PCT   = 70      # %   — pass threshold (was 80)
 MIN_VALID_PIX    = 5_000
 
-ARM1_TOPIC  = '/robot1/joint_states'   # right arm
-ARM2_TOPIC  = '/robot2/joint_states'   # left arm
+ARM1_TOPIC  = '/robot1/joint_states'   # fixed arm (static by design)
+ARM2_TOPIC  = '/robot2/joint_states'   # active arm (monitor this for motion)
 DEPTH_TOPIC = '/zed/zed_node/depth/depth_registered'
 
 
