@@ -344,6 +344,10 @@ class SmartRecorder(Node):
             sub = self.create_subscription(msg_type, topic, cb, 10)
             self._subs.append(sub)
 
+        # HUD printer thread — decoupled from recording callback (10 Hz)
+        self._hud_thread = threading.Thread(target=self._hud_loop, daemon=True)
+        self._hud_thread.start()
+
         self.get_logger().info(f"SmartRecorder ready — bag: {bag_path}")
 
     @staticmethod
@@ -432,17 +436,11 @@ class SmartRecorder(Node):
                     q.clear()
             self._frames_skipped += 1
 
-        # Update stats file
+        # Update stats file (fast atomic JSON write — stays in callback)
         total       = self._frames_kept + self._frames_skipped
         quality_pct = (self._frames_kept / total * 100.0) if total > 0 else 100.0
         self._write_stats(elapsed, quality_pct, quality_report=None)
-
-        # Print HUD
-        _print_hud(
-            self._cur_state, elapsed,
-            self._frames_kept, self._frames_skipped,
-            self._arm_moving, self._vision_moving,
-        )
+        # HUD is printed by a separate thread at 10 Hz — not here
 
     def _write_camera_buffers(self):
         """Flush camera topic buffers — called every depth frame regardless of motion."""
@@ -501,6 +499,21 @@ class SmartRecorder(Node):
             os.replace(tmp, STATS_FILE)
         except Exception as e:
             pass  # Non-fatal
+
+    def _hud_loop(self):
+        """Print HUD at 10 Hz in a dedicated thread — never blocks recording."""
+        HUD_INTERVAL = 0.1   # 10 Hz is plenty for human-readable display
+        while not self._stopping:
+            with self._lock:
+                state         = self._cur_state
+                elapsed       = time.monotonic() - self._start_time
+                frames_kept   = self._frames_kept
+                frames_skipped = self._frames_skipped
+                arm_moving    = self._arm_moving
+                vision_moving = self._vision_moving
+            _print_hud(state, elapsed, frames_kept, frames_skipped,
+                       arm_moving, vision_moving)
+            time.sleep(HUD_INTERVAL)
 
     def stop(self):
         """Graceful stop: flush last frame, write report, close bag."""
