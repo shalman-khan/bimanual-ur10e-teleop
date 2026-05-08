@@ -548,7 +548,7 @@ async def api_rosbag_stop():
 
 async def _run_analysis(bag_path: str) -> None:
     global _rosbag_phase, _rosbag_report, _rosbag_filtered_path
-    await asyncio.sleep(3)
+    await asyncio.sleep(10)
     loop = asyncio.get_running_loop()
     try:
         report = await loop.run_in_executor(None, analyze_bag, bag_path)
