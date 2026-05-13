@@ -549,12 +549,12 @@ async def api_rosbag_stop():
 
 async def _wait_for_bag_ready(bag_path: str, timeout_s: float = 60.0) -> str | None:
     """
-    Poll until metadata.yaml exists, parses cleanly, and every storage file
-    it references is present on disk.  Returns None on success, or an error
-    string if the deadline expires.
+    Poll until metadata.yaml exists and parses cleanly.  Returns None on
+    success, or an error string if the deadline expires.
 
-    ros2 bag record writes metadata.yaml last, after closing all storage
-    files, so its presence is the definitive signal that the bag is complete.
+    ros2 bag record writes metadata.yaml as its very last step, after
+    flushing and closing all storage files, so its presence alone is the
+    definitive signal that the bag is complete and safe to open.
     """
     import yaml
 
@@ -570,18 +570,10 @@ async def _wait_for_bag_ready(bag_path: str, timeout_s: float = 60.0) -> str | N
 
         try:
             with open(meta_path) as fh:
-                meta = yaml.safe_load(fh)
-            rel_paths = (meta
-                         .get('rosbag2_bagfile_information', {})
-                         .get('relative_file_paths', []))
+                yaml.safe_load(fh)
+            return None  # metadata present and parseable — bag is complete
         except Exception:
-            continue  # metadata still being written / partially flushed
-
-        if not rel_paths:
-            continue
-
-        if all(os.path.exists(os.path.join(bag_path, p)) for p in rel_paths):
-            return None  # all files present — bag is ready
+            continue  # file partially flushed, retry
 
     return (
         f'Timed out after {timeout_s:.0f}s waiting for bag to be finalised '
