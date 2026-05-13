@@ -534,9 +534,10 @@ async def api_rosbag_stop():
     if _rosbag_proc is not None:
         _rosbag_proc.terminate()
         try:
-            _rosbag_proc.wait(timeout=8)
+            _rosbag_proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
             _rosbag_proc.kill()
+            _rosbag_proc.wait()  # reap zombie; SIGKILL may leave bag incomplete
     _rosbag_proc       = None
     _rosbag_start_time = None
     _rosbag_phase      = "processing"
@@ -546,9 +547,64 @@ async def api_rosbag_stop():
     return {"status": "processing", "bag_path": path}
 
 
+async def _wait_for_bag_ready(bag_path: str, timeout_s: float = 60.0) -> str | None:
+    """
+    Poll until metadata.yaml exists, parses cleanly, and every storage file
+    it references is present on disk.  Returns None on success, or an error
+    string if the deadline expires.
+
+    ros2 bag record writes metadata.yaml last, after closing all storage
+    files, so its presence is the definitive signal that the bag is complete.
+    """
+    import yaml
+
+    meta_path = os.path.join(bag_path, 'metadata.yaml')
+    loop      = asyncio.get_event_loop()
+    deadline  = loop.time() + timeout_s
+
+    while loop.time() < deadline:
+        await asyncio.sleep(0.5)
+
+        if not os.path.exists(meta_path):
+            continue
+
+        try:
+            with open(meta_path) as fh:
+                meta = yaml.safe_load(fh)
+            rel_paths = (meta
+                         .get('rosbag2_bagfile_information', {})
+                         .get('relative_file_paths', []))
+        except Exception:
+            continue  # metadata still being written / partially flushed
+
+        if not rel_paths:
+            continue
+
+        if all(os.path.exists(os.path.join(bag_path, p)) for p in rel_paths):
+            return None  # all files present — bag is ready
+
+    return (
+        f'Timed out after {timeout_s:.0f}s waiting for bag to be finalised '
+        f'in {bag_path} — the recorder may have been killed uncleanly.'
+    )
+
+
 async def _run_analysis(bag_path: str) -> None:
     global _rosbag_phase, _rosbag_report, _rosbag_filtered_path
-    await asyncio.sleep(10)
+
+    wait_error = await _wait_for_bag_ready(bag_path)
+    if wait_error:
+        _rosbag_report = {
+            'error': wait_error,
+            'quality_pct': 0, 'pass': False,
+            'raw_duration_s': 0, 'filtered_duration_s': 0,
+            'frames_kept': 0, 'frames_skipped': 0,
+            'has_depth': False, 'bag_path': bag_path,
+            'filtered_bag_path': None,
+        }
+        _rosbag_phase = "done"
+        return
+
     loop = asyncio.get_running_loop()
     try:
         report = await loop.run_in_executor(None, analyze_bag, bag_path)

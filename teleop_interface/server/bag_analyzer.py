@@ -62,11 +62,23 @@ def analyze_bag(bag_path: str) -> Dict[str, Any]:
     if not os.path.exists(bag_path):
         return {**base, 'error': f'Bag path not found: {bag_path}'}
 
+    # metadata.yaml is written by the recorder on clean shutdown.  If it's
+    # missing the recorder was likely force-killed (SIGKILL after timeout).
+    meta_path = os.path.join(bag_path, 'metadata.yaml')
+    if not os.path.exists(meta_path):
+        return {**base, 'error': (
+            f'Bag metadata missing — recorder was likely killed before it could '
+            f'finalise the bag ({meta_path}). '
+            f'Try increasing the stop timeout or re-recording.'
+        )}
+
     filtered_bag_path = bag_path + '_filtered'
 
     try:
         # ── Open reader (all topics, no filter) ───────────────────────────
-        storage_r = rosbag2_py.StorageOptions(uri=bag_path, storage_id='sqlite3')
+        # storage_id='' lets rosbag2 auto-detect the format from metadata.yaml
+        # (avoids hard-coding 'sqlite3' which fails when bags are recorded as mcap)
+        storage_r = rosbag2_py.StorageOptions(uri=bag_path, storage_id='')
         conv      = rosbag2_py.ConverterOptions('', '')
         reader    = rosbag2_py.SequentialReader()
         reader.open(storage_r, conv)
