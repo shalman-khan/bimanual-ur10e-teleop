@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import shlex
+import signal
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -418,6 +419,7 @@ _ROS_SETUP = (
 )
 
 _rosbag_proc:            Optional[subprocess.Popen]  = None
+_rosbag_pgid:            Optional[int]               = None   # process group to kill on stop
 _rosbag_path:            Optional[str]               = None   # original bag
 _rosbag_filtered_path:   Optional[str]               = None   # filtered output bag
 _rosbag_start_time:      Optional[datetime.datetime] = None
@@ -494,7 +496,7 @@ class RosbagStartRequest(BaseModel):
 
 @app.post("/api/rosbag/start")
 async def api_rosbag_start(req: RosbagStartRequest):
-    global _rosbag_proc, _rosbag_path, _rosbag_filtered_path, \
+    global _rosbag_proc, _rosbag_pgid, _rosbag_path, _rosbag_filtered_path, \
            _rosbag_start_time, _rosbag_phase, _rosbag_report
 
     if _rosbag_phase == "recording":
@@ -511,7 +513,13 @@ async def api_rosbag_start(req: RosbagStartRequest):
     cmd      = f"{_ROS_SETUP}ros2 bag record -o {shlex.quote(bag_path)} {topics}"
 
     try:
-        _rosbag_proc          = subprocess.Popen(["bash", "-c", cmd], env=os.environ.copy())
+        # start_new_session=True puts bash and all its children (ros2 bag record)
+        # in a new process group so we can signal the whole group on stop.
+        proc                  = subprocess.Popen(["bash", "-c", cmd],
+                                                 env=os.environ.copy(),
+                                                 start_new_session=True)
+        _rosbag_proc          = proc
+        _rosbag_pgid          = proc.pid   # pgid == pid when start_new_session=True
         _rosbag_path          = bag_path
         _rosbag_filtered_path = None
         _rosbag_start_time    = datetime.datetime.now()
@@ -522,9 +530,19 @@ async def api_rosbag_start(req: RosbagStartRequest):
         return {"error": str(exc)}
 
 
+def _kill_rosbag_proc(sig: int) -> None:
+    """Send sig to the entire recorder process group (bash + ros2 bag record)."""
+    if _rosbag_pgid is None:
+        return
+    try:
+        os.killpg(_rosbag_pgid, sig)
+    except (ProcessLookupError, OSError):
+        pass  # process group already gone
+
+
 @app.post("/api/rosbag/stop")
 async def api_rosbag_stop():
-    global _rosbag_proc, _rosbag_start_time, _rosbag_phase
+    global _rosbag_proc, _rosbag_pgid, _rosbag_start_time, _rosbag_phase
 
     if _rosbag_phase != "recording":
         return {"error": "Not recording"}
@@ -532,13 +550,14 @@ async def api_rosbag_stop():
     path = _rosbag_path
 
     if _rosbag_proc is not None:
-        _rosbag_proc.terminate()
+        _kill_rosbag_proc(signal.SIGTERM)
         try:
             _rosbag_proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
-            _rosbag_proc.kill()
+            _kill_rosbag_proc(signal.SIGKILL)
             _rosbag_proc.wait()  # reap zombie; SIGKILL may leave bag incomplete
     _rosbag_proc       = None
+    _rosbag_pgid       = None
     _rosbag_start_time = None
     _rosbag_phase      = "processing"
 
@@ -639,17 +658,19 @@ async def api_rosbag_save():
 @app.post("/api/rosbag/discard")
 async def api_rosbag_discard():
     import shutil
-    global _rosbag_proc, _rosbag_path, _rosbag_filtered_path, \
+    global _rosbag_proc, _rosbag_pgid, _rosbag_path, _rosbag_filtered_path, \
            _rosbag_start_time, _rosbag_phase, _rosbag_report
 
     # Stop if still recording
     if _rosbag_proc is not None and _rosbag_proc.poll() is None:
-        _rosbag_proc.terminate()
+        _kill_rosbag_proc(signal.SIGTERM)
         try:
             _rosbag_proc.wait(timeout=8)
         except subprocess.TimeoutExpired:
-            _rosbag_proc.kill()
+            _kill_rosbag_proc(signal.SIGKILL)
+            _rosbag_proc.wait()
     _rosbag_proc       = None
+    _rosbag_pgid       = None
     _rosbag_start_time = None
 
     # Delete both raw and filtered bags
