@@ -448,7 +448,7 @@ const app = {
   loadTrajExample() {
     el('traj-textarea').value = JSON.stringify([
       // {left_joints:[-1.1083,-1.1065,-2.7367,0.7836,-4.7909,-1.6520],  left_gripper:0.0,
-      {left_joints:[-2.155,-1.4352,-2.4564,0.5894,-4.1043,-1.74],  left_gripper:0.0,
+      {left_joints:[-2.155,-1.4352,-2.4564,0.5894,-4.1043,-0.2312],  left_gripper:0.0,
         right_joints:[ -0.9579,-1.9195,2.5167,-3.4194,-2.0268,0.2502] , right_gripper:0.0, time_from_start:0.1},
       // { left_joints:[0,-1.571,-1.571,-1.571,1.571,0],  left_gripper:0.0,
       //   right_joints:[0,-1.571,1.571,-1.571,-1.571,0], right_gripper:0.0, time_from_start:0.0 },

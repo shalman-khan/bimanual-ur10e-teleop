@@ -510,7 +510,14 @@ async def api_rosbag_start(req: RosbagStartRequest):
     ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     bag_path = f"{bag_dir}/session_{ts}"
     topics   = " ".join(RECORD_TOPICS)
-    cmd      = f"{_ROS_SETUP}ros2 bag record -o {shlex.quote(bag_path)} {topics}"
+    # --storage mcap (not the default sqlite3): the sqlite3 plugin in rosbag2
+    # 0.15.x intermittently aborts on startup with
+    #   SqliteException: SQLite error (1299): constraint failed
+    # (a NOT NULL race when a high-rate topic delivers a message before its
+    # topic row is registered). mcap doesn't use sqlite, so that crash class
+    # cannot occur. The analyzer's reader auto-detects storage from
+    # metadata.yaml, so the downstream filter pipeline is unaffected.
+    cmd      = f"{_ROS_SETUP}ros2 bag record --storage mcap -o {shlex.quote(bag_path)} {topics}"
 
     try:
         # start_new_session=True puts bash and all its children (ros2 bag record)
@@ -550,9 +557,13 @@ async def api_rosbag_stop():
     path = _rosbag_path
 
     if _rosbag_proc is not None:
-        _kill_rosbag_proc(signal.SIGTERM)
+        # SIGINT (not SIGTERM) is what ros2 bag record handles gracefully — it
+        # mirrors a terminal Ctrl-C, so the recorder flushes its storage files
+        # and writes metadata.yaml as its final step. SIGTERM tears it down
+        # without finalising, leaving an orphaned .db3 with no metadata.yaml.
+        _kill_rosbag_proc(signal.SIGINT)
         try:
-            _rosbag_proc.wait(timeout=15)
+            _rosbag_proc.wait(timeout=30)  # large bags need time to flush
         except subprocess.TimeoutExpired:
             _kill_rosbag_proc(signal.SIGKILL)
             _rosbag_proc.wait()  # reap zombie; SIGKILL may leave bag incomplete
