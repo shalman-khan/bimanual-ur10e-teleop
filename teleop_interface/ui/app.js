@@ -595,10 +595,12 @@ const app = {
   },
 
   async saveRosbag() {
-    const res = await post('/api/rosbag/save');
+    const keepRaw = !!(document.getElementById('chk-keep-raw') || {}).checked;
+    const res = await post('/api/rosbag/save', { keep_raw: keepRaw });
     app._stopPhasePoll();
     const path = res.filtered_bag_path || res.bag_path || '';
-    toast(`Filtered bag saved → ${path}`, 'success');
+    const rawNote = res.raw_kept && res.raw_bag_path ? ` (raw kept → ${res.raw_bag_path})` : '';
+    toast(`Filtered bag saved → ${path}${rawNote}`, 'success');
     app._showRosbagPhase('idle');
   },
 

@@ -644,16 +644,23 @@ async def _run_analysis(bag_path: str) -> None:
     _rosbag_phase         = "done"
 
 
+class SaveBagRequest(BaseModel):
+    keep_raw: bool = False
+
+
 @app.post("/api/rosbag/save")
-async def api_rosbag_save():
-    """Keep the filtered bag. Delete the raw bag to save space."""
+async def api_rosbag_save(req: SaveBagRequest = SaveBagRequest()):
+    """Keep the filtered bag. Delete the raw bag by default, unless keep_raw is set."""
     import shutil
     global _rosbag_phase, _rosbag_report, _rosbag_path, _rosbag_filtered_path
     raw_path      = _rosbag_path
     filtered_path = _rosbag_filtered_path
 
-    # Delete raw bag (large, has static frames)
-    if raw_path and os.path.exists(raw_path):
+    # Delete raw bag (large, has static frames) unless the user opted to keep it
+    raw_kept = False
+    if req.keep_raw:
+        raw_kept = bool(raw_path and os.path.exists(raw_path))
+    elif raw_path and os.path.exists(raw_path):
         try:
             shutil.rmtree(raw_path)
         except Exception:
@@ -663,7 +670,12 @@ async def api_rosbag_save():
     _rosbag_report        = None
     _rosbag_path          = None
     _rosbag_filtered_path = None
-    return {"status": "saved", "filtered_bag_path": filtered_path}
+    return {
+        "status": "saved",
+        "filtered_bag_path": filtered_path,
+        "raw_bag_path": raw_path if raw_kept else None,
+        "raw_kept": raw_kept,
+    }
 
 
 @app.post("/api/rosbag/discard")

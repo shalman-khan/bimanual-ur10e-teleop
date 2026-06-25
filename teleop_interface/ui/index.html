@@ -109,7 +109,10 @@
       <!-- DONE: report + save/discard -->
       <div id="rosbag-phase-done" style="display:none;">
         <div id="rosbag-report-box"></div>
-        <div class="rosbag-btn-row" style="margin-top:10px;">
+        <label style="display:flex; align-items:center; gap:6px; margin-top:10px; font-size:0.9em; cursor:pointer;">
+          <input type="checkbox" id="chk-keep-raw"> Keep unfiltered rosbag
+        </label>
+        <div class="rosbag-btn-row" style="margin-top:8px;">
           <button class="btn-success btn-sm" id="btn-save-bag"    onclick="app.saveRosbag()">&#10003; Save</button>
           <button class="btn-danger  btn-sm" id="btn-discard-bag" onclick="app.discardRosbag()">&#128465; Discard</button>
         </div>
