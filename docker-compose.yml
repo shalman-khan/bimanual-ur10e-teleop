@@ -35,6 +35,10 @@ services:
       - teleop_settings:/workspace/settings # persistent settings across restarts
       - ./fastdds_no_shm.xml:/workspace/fastdds_no_shm.xml:ro  # FastDDS UDP-only profile
       - /home/cartin/rosbag_ws:/home/cartin/rosbag_ws  # rosbag output — persists on host
+      # Live-mount the server + Web UI so host edits take effect on container
+      # restart (no image rebuild needed). The image's COPY is the fallback when
+      # this mount is absent. Pure-Python, so no build step is required.
+      - ./teleop_interface:/workspace/teleop_interface
 
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
