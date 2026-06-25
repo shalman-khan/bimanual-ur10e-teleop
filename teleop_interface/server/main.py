@@ -105,14 +105,24 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
-# Static UI files
-app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
+# Static UI files — served with no-cache so UI edits always take effect on reload
+class NoCacheStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
+
+app.mount("/static", NoCacheStaticFiles(directory=UI_DIR), name="static")
 
 
 # ── Root ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return FileResponse(os.path.join(UI_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(UI_DIR, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -655,6 +665,7 @@ async def api_rosbag_save(req: SaveBagRequest = SaveBagRequest()):
     global _rosbag_phase, _rosbag_report, _rosbag_path, _rosbag_filtered_path
     raw_path      = _rosbag_path
     filtered_path = _rosbag_filtered_path
+    print(f"[rosbag/save] keep_raw={req.keep_raw} raw_path={raw_path}", flush=True)
 
     # Delete raw bag (large, has static frames) unless the user opted to keep it
     raw_kept = False
